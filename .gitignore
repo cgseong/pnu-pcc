@@ -23,5 +23,3 @@ venv/
 
 # Data files (optional - if you don't want to commit CSV)
 *.csv
-
-.streamlit/secrets.toml
