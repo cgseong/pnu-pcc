@@ -1,808 +1,1172 @@
-"""
-취업 현황 분석 시스템 (Supabase 연동 버전)
-Employment Status Analysis System - Supabase Integration
-
-버전: 3.0 (Supabase 연동)
-"""
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from typing import Tuple, Optional
-from dataclasses import dataclass
-import warnings
-from datetime import datetime
-import logging
-import os
+from supabase import create_client, Client
 
-# 환경 변수 로드 시도 (local 개발 환경에서만)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except (ImportError, ModuleNotFoundError):
-    # Streamlit Cloud 또는 python-dotenv가 없는 환경에서는 스킵
-    pass
+# Supabase 클라이언트 초기화
+@st.cache_resource
+def init_supabase():
+    """Supabase 클라이언트 초기화"""
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
 
-# =====================
-# 설정 클래스 (로컬 import 실패 시 대비)
-# =====================
+# 페이지 설정
+st.set_page_config(
+    page_title="닥치고 코딩",
+    page_icon="🏆",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class AppConfig:
-    """애플리케이션 설정"""
-    APP_TITLE = "정보컴퓨터공학부 취업 현황"
-    APP_ICON = "📊"
-    APP_VERSION = "v3.0 (Supabase 연동)"
+# 세션 상태 초기화
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
 
-    # 제외 대상 카테고리
-    EXCLUDE_CATEGORIES = ['진학', '외국인']
+# 로그인 함수
+def login():
+    st.sidebar.markdown("### 🔐 관리자 로그인")
+    username = st.sidebar.text_input("아이디")
+    password = st.sidebar.text_input("비밀번호", type="password")
 
-    COLORS = {
-        'primary': '#007bff',
-        'success': '#28a745',
-        'warning': '#ffc107',
-        'danger': '#dc3545',
-        'info': '#17a2b8',
-        'light': '#f8f9fa',
-        'dark': '#343a40'
-    }
-
-
-class SupabaseConfig:
-    """Supabase 설정"""
-    GRADUATES_TABLE = "graduation_employment"
-    _url_cache = None
-    _key_cache = None
-
-    @classmethod
-    def _get_url(cls):
-        """URL 가져오기 (환경변수, top-level secrets, nested secrets 지원)"""
-        if cls._url_cache is not None:
-            return cls._url_cache
-
-        # 1. 환경변수 우선
-        url = os.getenv("SUPABASE_URL", "").strip()
-        if url:
-            cls._url_cache = url
-            return url
-
-        # 2. Top-level secrets: SUPABASE_URL = "..."
-        try:
-            url = st.secrets.get("SUPABASE_URL", "").strip()
-            if url:
-                cls._url_cache = url
-                return url
-        except:
-            pass
-
-        # 3. Nested secrets: [supabase] url = "..."
-        try:
-            url = st.secrets.supabase.url
-            if url:
-                cls._url_cache = url
-                return url
-        except:
-            pass
-
-        cls._url_cache = ""
-        return ""
-
-    @classmethod
-    def _get_key(cls):
-        """Key 가져오기 (환경변수, top-level secrets, nested secrets 지원)"""
-        if cls._key_cache is not None:
-            return cls._key_cache
-
-        # 1. 환경변수 우선
-        key = os.getenv("SUPABASE_KEY", "").strip()
-        if key:
-            cls._key_cache = key
-            return key
-
-        # 2. Top-level secrets: SUPABASE_KEY = "..."
-        try:
-            key = st.secrets.get("SUPABASE_KEY", "").strip()
-            if key:
-                cls._key_cache = key
-                return key
-        except:
-            pass
-
-        # 3. Nested secrets: [supabase] key = "..."
-        try:
-            key = st.secrets.supabase.key
-            if key:
-                cls._key_cache = key
-                return key
-        except:
-            pass
-
-        cls._key_cache = ""
-        return ""
-
-    @property
-    def SUPABASE_URL(self):
-        return self._get_url()
-
-    @property
-    def SUPABASE_KEY(self):
-        return self._get_key()
-
-    @classmethod
-    def is_configured(cls) -> bool:
-        return bool(cls._get_url() and cls._get_key())
-
-
-# 로컬 모듈 import 시도
-try:
-    from config import app_config, supabase_config
-except (ImportError, ModuleNotFoundError):
-    # 모듈 로드 실패 시 인라인 정의 사용
-    app_config = AppConfig()
-    supabase_config = SupabaseConfig()
-
-# Supabase DB 모듈 import 시도
-try:
-    from supabase_db import get_supabase_client, SupabaseDB
-except Exception:
-    # 모듈을 찾을 수 없으면 더미 클래스와 함수 제공
-    class SupabaseDB:
-        """Fallback SupabaseDB 클래스"""
-        def __init__(self):
-            self.error_message = "Supabase 모듈을 찾을 수 없습니다"
-
-        def is_connected(self):
-            return False
-
-        def get_all_graduates(self):
-            return None
-
-        def get_yearly_stats(self):
-            return None
-
-        def get_regional_stats(self):
-            return None
-
-        def get_company_stats(self):
-            return None, None
-
-    @st.cache_resource
-    def get_supabase_client():
-        return SupabaseDB()
-
-warnings.filterwarnings('ignore')
-
-# 로깅 설정
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# =====================
-# 데이터 클래스
-# =====================
-
-@dataclass
-class EmploymentStats:
-    """취업 통계 정보"""
-    total: int = 0
-    employed: int = 0
-    unemployed: int = 0
-    employment_rate: float = 0.0
-    year: Optional[str] = None
-
-    @property
-    def employment_rate_str(self) -> str:
-        return f"{self.employment_rate:.1f}%"
-
-
-@dataclass
-class TrendAnalysis:
-    """트렌드 분석 결과"""
-    best_year: str = ""
-    worst_year: str = ""
-    best_rate: float = 0.0
-    worst_rate: float = 0.0
-    average_rate: float = 0.0
-    trend_direction: str = ""
-
-    @property
-    def trend_emoji(self) -> str:
-        if self.trend_direction == "상승":
-            return "📈"
-        elif self.trend_direction == "하락":
-            return "📉"
+    if st.sidebar.button("로그인"):
+        # secrets에서 관리자 정보 가져오기
+        if (username == st.secrets["admin"]["username"] and
+            password == st.secrets["admin"]["password"]):
+            st.session_state.authenticated = True
+            st.session_state.is_admin = True
+            st.sidebar.success("관리자로 로그인되었습니다.")
+            st.rerun()
         else:
-            return "📊"
+            st.sidebar.error("아이디 또는 비밀번호가 올바르지 않습니다.")
 
+# 로그아웃 함수
+def logout():
+    if st.sidebar.button("로그아웃"):
+        st.session_state.authenticated = False
+        st.session_state.is_admin = False
+        st.rerun()
 
-# =====================
-# 유틸리티 함수
-# =====================
-
-def init_app():
-    """앱 초기 설정"""
-    st.set_page_config(
-        page_title=app_config.APP_TITLE,
-        page_icon=app_config.APP_ICON,
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
-
-def load_css():
-    """CSS 스타일 로드"""
-    css = f"""
-    <style>
-        .main-header {{
-            text-align: center;
-            padding: 1rem 0;
-            background: linear-gradient(90deg, {app_config.COLORS['primary']} 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }}
-
-        .metric-card {{
-            background: linear-gradient(135deg, {app_config.COLORS['light']} 0%, #e9ecef 100%);
-            padding: 1.2rem;
-            border-radius: 12px;
-            border-left: 4px solid {app_config.COLORS['primary']};
-            margin: 0.5rem 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: transform 0.2s ease;
-        }}
-
-        .insight-box {{
-            background: linear-gradient(135deg, #e8f4f8 0%, #d1ecf1 100%);
-            padding: 1.2rem;
-            border-radius: 12px;
-            border-left: 4px solid {app_config.COLORS['info']};
-            margin: 1rem 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }}
-
-        .status-box {{
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
-            border-left: 4px solid;
-        }}
-
-        .success-box {{
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            border-left-color: {app_config.COLORS['success']};
-        }}
-
-        .warning-box {{
-            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-            border-left-color: {app_config.COLORS['warning']};
-        }}
-
-        .error-box {{
-            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-            border-left-color: {app_config.COLORS['danger']};
-        }}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
-
-
-def show_message(message: str, msg_type: str = "info"):
-    """스타일된 메시지 표시"""
-    icon_map = {
-        'success': '✅',
-        'warning': '⚠️',
-        'error': '❌',
-        'info': 'ℹ️'
+# 스타일 설정
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
     }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 0.25rem solid #1f77b4;
+        margin: 0.5rem 0;
+    }
+    .filter-section {
+        background-color: #e8f4fd;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    icon = icon_map.get(msg_type, 'ℹ️')
-    class_name = f"{msg_type}-box"
-
-    st.markdown(f'''
-    <div class="status-box {class_name}">
-        {icon} {message}
-    </div>
-    ''', unsafe_allow_html=True)
-
-
-def safe_divide(numerator, denominator, default=0):
-    """안전한 나눗셈"""
+# Supabase에서 데이터 로딩
+@st.cache_data(ttl=600)  # 10분 캐시
+def load_data_from_supabase():
+    """Supabase에서 데이터 로드 및 전처리"""
     try:
-        return numerator / denominator if denominator != 0 else default
-    except (TypeError, ZeroDivisionError):
-        return default
+        supabase = init_supabase()
 
+        # 모든 데이터 가져오기
+        response = supabase.table('pcc_result').select("*").execute()
 
-# =====================
-# 데이터 분석 함수
-# =====================
+        # DataFrame으로 변환
+        df = pd.DataFrame(response.data)
 
-def get_overall_stats(db: SupabaseDB) -> EmploymentStats:
-    """전체 취업 통계 계산"""
-    df = db.get_all_graduates()
-    if df is None or df.empty:
-        return EmploymentStats()
+        if df.empty:
+            st.error("데이터베이스에 데이터가 없습니다.")
+            return None
 
-    # 제외 대상 필터링
-    df_filtered = df[~df['employment_status'].isin(app_config.EXCLUDE_CATEGORIES)]
+        # 컬럼명 통일 (등급 → 등급(Lv.))
+        if '등급' in df.columns:
+            df['등급(Lv.)'] = df['등급']
 
-    total = len(df_filtered)
-    employed = len(df_filtered[df_filtered['employment_status'] == '취업'])
-    unemployed = total - employed
-    employment_rate = (employed / total * 100) if total > 0 else 0
+        # 데이터 전처리
+        if '합격여부' in df.columns:
+            df['합격여부_binary'] = df['합격여부'].map({'합격': 1, '불합격': 0})
 
-    return EmploymentStats(total, employed, unemployed, employment_rate)
+        if '학년' in df.columns:
+            df['학년'] = df['학년'].astype(str)
 
+        if '회차' in df.columns:
+            df['회차'] = df['회차'].astype(int)
 
-def get_yearly_stats(db: SupabaseDB) -> pd.DataFrame:
-    """연도별 취업 통계 계산"""
-    yearly_stats = db.get_yearly_stats()
-    return yearly_stats if yearly_stats is not None else pd.DataFrame()
+        if '총점' in df.columns:
+            df['총점'] = pd.to_numeric(df['총점'], errors='coerce')
 
-
-def get_regional_stats(db: SupabaseDB) -> pd.DataFrame:
-    """지역별 취업 통계 계산"""
-    regional_stats = db.get_regional_stats()
-    return regional_stats if regional_stats is not None else pd.DataFrame()
-
-
-def get_company_stats(db: SupabaseDB) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """기업 통계 계산"""
-    company_type_stats, company_size_stats = db.get_company_stats()
-    return (
-        company_type_stats if company_type_stats is not None else pd.DataFrame(),
-        company_size_stats if company_size_stats is not None else pd.DataFrame()
-    )
-
-
-def get_trend_analysis(yearly_stats: pd.DataFrame) -> TrendAnalysis:
-    """트렌드 분석"""
-    if yearly_stats.empty:
-        return TrendAnalysis()
-
-    best_idx = yearly_stats['취업률'].idxmax()
-    worst_idx = yearly_stats['취업률'].idxmin()
-
-    best_year = str(yearly_stats.loc[best_idx, '연도'])
-    worst_year = str(yearly_stats.loc[worst_idx, '연도'])
-    best_rate = yearly_stats.loc[best_idx, '취업률']
-    worst_rate = yearly_stats.loc[worst_idx, '취업률']
-    average_rate = yearly_stats['취업률'].mean()
-
-    # 트렌드 방향
-    if len(yearly_stats) >= 2:
-        recent_change = yearly_stats.iloc[-1]['취업률'] - yearly_stats.iloc[-2]['취업률']
-        if recent_change > 1:
-            trend_direction = "상승"
-        elif recent_change < -1:
-            trend_direction = "하락"
+        # 등급 컬럼이 없으면 생성, 있으면 결측치 처리
+        if '등급(Lv.)' not in df.columns:
+            df['등급(Lv.)'] = '없음'
         else:
-            trend_direction = "보합"
+            df['등급(Lv.)'] = df['등급(Lv.)'].fillna('없음')
+
+        return df
+    except Exception as e:
+        st.error(f"데이터 로딩 중 오류가 발생했습니다: {e}")
+        return None
+
+# 데이터 삽입 함수 (관리자용)
+def insert_pcc_result(supabase: Client, data: dict):
+    """새로운 PCC 결과 삽입"""
+    try:
+        response = supabase.table('pcc_result').insert(data).execute()
+        return True, "데이터가 성공적으로 추가되었습니다."
+    except Exception as e:
+        return False, f"데이터 추가 중 오류 발생: {e}"
+
+# 데이터 업데이트 함수 (관리자용)
+def update_pcc_result(supabase: Client, record_id: int, data: dict):
+    """PCC 결과 업데이트"""
+    try:
+        response = supabase.table('pcc_result').update(data).eq('id', record_id).execute()
+        return True, "데이터가 성공적으로 수정되었습니다."
+    except Exception as e:
+        return False, f"데이터 수정 중 오류 발생: {e}"
+
+# 데이터 삭제 함수 (관리자용)
+def delete_pcc_result(supabase: Client, record_id: int):
+    """PCC 결과 삭제"""
+    try:
+        response = supabase.table('pcc_result').delete().eq('id', record_id).execute()
+        return True, "데이터가 성공적으로 삭제되었습니다."
+    except Exception as e:
+        return False, f"데이터 삭제 중 오류 발생: {e}"
+
+# 메인 애플리케이션
+def main():
+    st.markdown('<h1 class="main-header">🏆 부산대학교 PCC 응시현황</h1>', unsafe_allow_html=True)
+
+    # 데이터 로딩
+    df = load_data_from_supabase()
+    if df is None:
+        return
+
+    # 사이드바 - 데이터 필터링 메뉴
+    st.sidebar.markdown('<div class="filter-section">', unsafe_allow_html=True)
+    st.sidebar.header("🔍 데이터 필터링")
+
+    # 학과 선택 (다중선택)
+    departments = st.sidebar.multiselect(
+        "학과 선택",
+        options=sorted(df['학과'].unique()),
+        default=sorted(df['학과'].unique()),
+        help="분석할 학과를 선택하세요"
+    )
+
+    # 학년 선택
+    grades = st.sidebar.multiselect(
+        "학년 선택",
+        options=sorted(df['학년'].unique()),
+        default=sorted(df['학년'].unique()),
+        help="분석할 학년을 선택하세요"
+    )
+
+    # 합격 여부 선택
+    pass_status = st.sidebar.multiselect(
+        "합격 여부 선택",
+        options=['합격', '불합격'],
+        default=['합격', '불합격'],
+        help="분석할 합격 여부를 선택하세요"
+    )
+
+    # 등급 선택
+    levels = st.sidebar.multiselect(
+        "등급 선택",
+        options=sorted(df['등급(Lv.)'].unique()),
+        default=sorted(df['등급(Lv.)'].unique()),
+        help="분석할 등급을 선택하세요"
+    )
+
+    # 시험과목 선택
+    subjects = st.sidebar.multiselect(
+        "시험과목 선택",
+        options=sorted(df['시험과목'].unique()),
+        default=sorted(df['시험과목'].unique()),
+        help="분석할 시험과목을 선택하세요"
+    )
+
+    st.sidebar.markdown('</div>', unsafe_allow_html=True)
+
+    # 데이터 새로고침 버튼
+    if st.sidebar.button("🔄 데이터 새로고침"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # 관리자 로그인 섹션
+    login()
+    if st.session_state.is_admin:
+        logout()
+
+    # 데이터 필터링 적용
+    filtered_df = df[
+        (df['학과'].isin(departments)) &
+        (df['학년'].isin(grades)) &
+        (df['합격여부'].isin(pass_status)) &
+        (df['등급(Lv.)'].isin(levels)) &
+        (df['시험과목'].isin(subjects))
+    ]
+
+    if filtered_df.empty:
+        st.warning("선택한 조건에 해당하는 데이터가 없습니다.")
+        return
+
+    # 탭 생성
+    if st.session_state.is_admin:
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+            "📊 전체 정보",
+            "📈 정보컴퓨터공학부 회차별 응시자 현황",
+            "🎓 정보컴퓨터공학부 학년별 통계",
+            "📚 PCCP 레벨 정보",
+            "👨‍🎓 학생별 성과 분석",
+            "📋 상세 데이터",
+            "📈 성장 추이 분석",
+            "🔄 정보컴퓨터공학부 3회차-5회차 비교 분석",
+            "➕ 데이터 관리"  # 새로운 탭
+        ])
     else:
-        trend_direction = "데이터 부족"
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📊 전체 정보",
+            "📈 정보컴퓨터공학부 회차별 응시자 현황",
+            "🎓 정보컴퓨터공학부 학년별 통계",
+            "📚 PCCP 레벨 정보"
+        ])
 
-    return TrendAnalysis(best_year, worst_year, best_rate, worst_rate, average_rate, trend_direction)
+    # 탭 1: 전체 정보
+    with tab1:
+        st.header("📊 전체 응시 정보")
 
+        # 주요 지표
+        col1, col2, col3, col4 = st.columns(4)
 
-# =====================
-# 시각화 함수
-# =====================
+        total_applicants = len(filtered_df)
+        total_passed = len(filtered_df[filtered_df['합격여부'] == '합격'])
+        total_pass_rate = (total_passed / total_applicants * 100) if total_applicants > 0 else 0
+        avg_score = filtered_df['총점'].mean()
 
-def create_kpi_metrics(stats: EmploymentStats):
-    """KPI 메트릭 카드 생성"""
-    col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(
+                label="전체 응시자수",
+                value=f"{total_applicants:,}명"
+            )
 
-    with col1:
-        st.metric(
-            label="🎓 전체 졸업자",
-            value=f"{stats.total:,}명",
-            help="진학자 및 외국인 제외"
-        )
+        with col2:
+            st.metric(
+                label="전체 합격률",
+                value=f"{total_pass_rate:.1f}%"
+            )
 
-    with col2:
-        st.metric(
-            label="✅ 취업자",
-            value=f"{stats.employed:,}명",
-            delta=f"{stats.employment_rate:.1f}% 취업률"
-        )
+        with col3:
+            st.metric(
+                label="전체 평균점수",
+                value=f"{avg_score:.1f}점"
+            )
 
-    with col3:
-        st.metric(
-            label="❌ 미취업자",
-            value=f"{stats.unemployed:,}명",
-            delta=f"{100 - stats.employment_rate:.1f}% 미취업률"
-        )
-
-    with col4:
-        rate_color = "🟢" if stats.employment_rate >= 80 else "🟡" if stats.employment_rate >= 60 else "🔴"
-        st.metric(
-            label=f"{rate_color} 취업률",
-            value=f"{stats.employment_rate:.1f}%"
-        )
-
-
-def create_yearly_trend_chart(yearly_stats: pd.DataFrame) -> go.Figure:
-    """연도별 취업률 트렌드 차트"""
-    if yearly_stats.empty:
-        return go.Figure()
-
-    yearly_stats_copy = yearly_stats.copy()
-    yearly_stats_copy['연도'] = yearly_stats_copy['연도'].astype(int)
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        subplot_titles=('연도별 취업률 추이', '연도별 취업자/미취업자 현황'),
-        vertical_spacing=0.15
-    )
-
-    # 취업률 라인 차트
-    fig.add_trace(
-        go.Scatter(
-            x=yearly_stats_copy['연도'],
-            y=yearly_stats_copy['취업률'],
-            mode='lines+markers+text',
-            name='취업률',
-            text=[f"{rate}%" for rate in yearly_stats_copy['취업률']],
-            textposition="top center",
-            line=dict(color=app_config.COLORS['primary'], width=3),
-            marker=dict(size=10, color=app_config.COLORS['primary'])
-        ),
-        row=1, col=1
-    )
-
-    # 취업자/미취업자 스택 바
-    fig.add_trace(
-        go.Bar(
-            x=yearly_stats_copy['연도'],
-            y=yearly_stats_copy['취업자수'],
-            name='취업자',
-            marker_color=app_config.COLORS['success']
-        ),
-        row=2, col=1
-    )
-
-    fig.add_trace(
-        go.Bar(
-            x=yearly_stats_copy['연도'],
-            y=yearly_stats_copy['미취업자수'],
-            name='미취업자',
-            marker_color=app_config.COLORS['danger']
-        ),
-        row=2, col=1
-    )
-
-    fig.update_layout(
-        height=600,
-        showlegend=True,
-        title_text="📈 연도별 취업 현황 분석",
-        barmode='stack'
-    )
-
-    fig.update_yaxes(title_text="취업률 (%)", row=1, col=1)
-    fig.update_yaxes(title_text="인원 수", row=2, col=1)
-
-    return fig
-
-
-def create_regional_chart(regional_stats: pd.DataFrame) -> Tuple[go.Figure, go.Figure]:
-    """지역별 분석 차트"""
-    if regional_stats.empty:
-        return go.Figure(), go.Figure()
-
-    # 막대 차트
-    bar_fig = px.bar(
-        regional_stats.head(10),
-        x='지역',
-        y='취업자수',
-        text='비율',
-        title='🗺️ 상위 10개 지역별 취업자 분포',
-        labels={'취업자수': '취업자 수 (명)', '지역': '지역'},
-        color='취업자수',
-        color_continuous_scale='viridis'
-    )
-    bar_fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-    bar_fig.update_layout(height=400, showlegend=False)
-
-    # 파이 차트
-    top_regions = regional_stats.head(8)
-    other_count = regional_stats.iloc[8:]['취업자수'].sum() if len(regional_stats) > 8 else 0
-
-    if other_count > 0:
-        other_row = pd.DataFrame({'지역': ['기타'], '취업자수': [other_count]})
-        pie_data = pd.concat([top_regions, other_row], ignore_index=True)
-    else:
-        pie_data = top_regions
-
-    pie_fig = px.pie(
-        pie_data,
-        values='취업자수',
-        names='지역',
-        title='지역별 취업자 비율',
-        color_discrete_sequence=px.colors.qualitative.Set3
-    )
-    pie_fig.update_traces(textposition='inside', textinfo='percent+label')
-
-    return bar_fig, pie_fig
-
-
-def create_company_charts(
-    company_type_stats: pd.DataFrame,
-    company_size_stats: pd.DataFrame
-) -> Tuple[go.Figure, go.Figure]:
-    """기업 분석 차트"""
-    type_fig = go.Figure()
-    size_fig = go.Figure()
-
-    if not company_type_stats.empty:
-        type_fig = px.pie(
-            company_type_stats,
-            values='취업자수',
-            names='기업구분',
-            title='🏢 기업 유형별 취업자 분포',
-            color_discrete_sequence=px.colors.qualitative.Pastel
-        )
-        type_fig.update_traces(textposition='inside', textinfo='percent+label')
-
-    if not company_size_stats.empty:
-        size_fig = px.pie(
-            company_size_stats,
-            values='취업자수',
-            names='회사규모',
-            title='🏭 회사 규모별 취업자 분포',
-            color_discrete_sequence=px.colors.qualitative.Set2
-        )
-        size_fig.update_traces(textposition='inside', textinfo='percent+label')
-
-    return type_fig, size_fig
-
-
-# =====================
-# UI 렌더링 함수
-# =====================
-
-def show_header():
-    """헤더 섹션"""
-    st.markdown(f'''
-    <div class="main-header">
-        <h1>{app_config.APP_TITLE}</h1>
-        <p>Employment Status Analysis Dashboard</p>
-        <p>📅 분석 기간: 2020년 ~ 2024년 | 🎯 대상: 학부 졸업자 (진학자/외국인 제외)</p>
-    </div>
-    ''', unsafe_allow_html=True)
-
-
-def show_insights(trend: TrendAnalysis, stats: EmploymentStats):
-    """주요 인사이트 표시"""
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown(f'''
-        <div class="insight-box">
-            <h4>📊 주요 통계 인사이트</h4>
-            <ul>
-                <li><strong>최고 취업률:</strong> {trend.best_year}년 {trend.best_rate:.1f}%</li>
-                <li><strong>최저 취업률:</strong> {trend.worst_year}년 {trend.worst_rate:.1f}%</li>
-                <li><strong>평균 취업률:</strong> {trend.average_rate:.1f}%</li>
-                <li><strong>최근 트렌드:</strong> {trend.trend_emoji} {trend.trend_direction}</li>
-            </ul>
-        </div>
-        ''', unsafe_allow_html=True)
-
-    with col2:
-        if stats.employment_rate >= 80:
-            status = "우수"
-            color = app_config.COLORS['success']
-            recommendation = "현재 수준을 유지하고 질적 향상에 집중하세요."
-        elif stats.employment_rate >= 60:
-            status = "양호"
-            color = app_config.COLORS['warning']
-            recommendation = "취업률 향상을 위한 추가 프로그램 검토가 필요합니다."
-        else:
-            status = "개선 필요"
-            color = app_config.COLORS['danger']
-            recommendation = "취업 지원 프로그램의 전면적인 검토와 개선이 시급합니다."
-
-        st.markdown(f'''
-        <div class="insight-box">
-            <h4>💡 개선 방향 제안</h4>
-            <p><strong>현재 상태:</strong> <span style="color: {color};">{status}</span></p>
-            <p><strong>권장사항:</strong> {recommendation}</p>
-        </div>
-        ''', unsafe_allow_html=True)
-
-
-def setup_sidebar():
-    """사이드바 설정"""
-    with st.sidebar:
-        st.markdown(f"""
-        ### {app_config.APP_TITLE} {app_config.APP_VERSION}
-
-        **📊 주요 기능**
-        - 연도별 취업률 분석
-        - 지역별 취업 현황
-        - 기업 유형별 분석
-
-        **📅 분석 기간**
-        2020년 ~ 2024년
-
-        **🎯 분석 대상**
-        학부 졸업자 (진학자/외국인 제외)
-
-        **🗄️ 데이터 저장소**
-        Supabase PostgreSQL
-        """)
+        with col4:
+            st.metric(
+                label="합격자수",
+                value=f"{total_passed:,}명"
+            )
 
         st.markdown("---")
 
-        # 데이터베이스 연결 상태
-        db = get_supabase_client()
-        if db.is_connected():
-            show_message("Supabase 연결됨", "success")
+        # 상세 통계
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("📋 학과별 통계")
+            dept_stats = filtered_df.groupby('학과').agg({
+                '이름': 'count',
+                '합격여부_binary': ['sum', 'mean'],
+                '총점': 'mean'
+            }).round(2)
+            dept_stats.columns = ['응시자수', '합격자수', '합격률', '평균점수']
+            dept_stats['합격률'] = (dept_stats['합격률'] * 100).round(1).astype(str) + '%'
+            dept_stats = dept_stats.sort_values('응시자수', ascending=False)
+            st.dataframe(dept_stats, use_container_width=True)
+
+        with col2:
+            st.subheader("📊 시험과목별 통계")
+            subject_stats = filtered_df.groupby('시험과목').agg({
+                '이름': 'count',
+                '합격여부_binary': ['sum', 'mean'],
+                '총점': 'mean'
+            }).round(2)
+            subject_stats.columns = ['응시자수', '합격자수', '합격률', '평균점수']
+            subject_stats['합격률'] = (subject_stats['합격률'] * 100).round(1).astype(str) + '%'
+            st.dataframe(subject_stats, use_container_width=True)
+
+    # 탭 2: 정보컴퓨터공학부 회차별 응시자 현황
+    with tab2:
+        st.header("📈 정보컴퓨터공학부 회차별 응시자 현황")
+
+        # 정보컴퓨터공학부/전기컴퓨터공학부 데이터만 필터링
+        cse_df = filtered_df[
+            (filtered_df['학과'] == '정보컴퓨터공학부') |
+            (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
+            (filtered_df['학과'] == '전기컴퓨터공학부')
+        ]
+
+        if cse_df.empty:
+            st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
         else:
-            show_message(f"Supabase 미연결: {db.error_message}", "error")
+            # 회차별 통계 계산
+            round_stats = cse_df.groupby('회차').agg({
+                '이름': 'count',
+                '합격여부_binary': 'sum',
+                '총점': 'mean'
+            }).reset_index()
+            round_stats.columns = ['회차', '총_응시자수', '합격자수', '평균점수']
+            round_stats['불합격자수'] = round_stats['총_응시자수'] - round_stats['합격자수']
+            round_stats['합격률'] = (round_stats['합격자수'] / round_stats['총_응시자수'] * 100).round(1)
 
+            # Lv.별 인원수 통계 계산
+            level_stats = cse_df.groupby(['회차', '등급(Lv.)']).size().reset_index(name='인원수')
+            level_pivot = level_stats.pivot(index='회차', columns='등급(Lv.)', values='인원수').fillna(0)
 
-def render_yearly_analysis(db: SupabaseDB):
-    """연도별 분석 탭"""
-    st.subheader("📈 연도별 취업 현황 분석")
+            # 그래프 생성
+            fig = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=('회차별 응시자수', '회차별 합격률', '회차별 합격/불합격', '회차별 평균점수'),
+                specs=[[{"type": "scatter"}, {"type": "scatter"}],
+                       [{"type": "bar"}, {"type": "scatter"}]]
+            )
 
-    yearly_stats = get_yearly_stats(db)
-    if yearly_stats.empty:
-        show_message("연도별 데이터가 없습니다.", "warning")
-        return
+            # 응시자수 추이
+            fig.add_trace(
+                go.Scatter(x=round_stats['회차'], y=round_stats['총_응시자수'],
+                          mode='lines+markers+text', name='응시자수',
+                          line=dict(color='blue', width=3),
+                          text=round_stats['총_응시자수'],
+                          textposition='top center'),
+                row=1, col=1
+            )
 
-    # 차트
-    yearly_chart = create_yearly_trend_chart(yearly_stats)
-    st.plotly_chart(yearly_chart, use_container_width=True)
+            # 합격률 추이
+            fig.add_trace(
+                go.Scatter(x=round_stats['회차'], y=round_stats['합격률'],
+                          mode='lines+markers+text', name='합격률(%)',
+                          line=dict(color='green', width=3),
+                          text=[f"{x:.1f}%" for x in round_stats['합격률']],
+                          textposition='top center'),
+                row=1, col=2
+            )
 
-    # 상세 테이블
-    st.subheader("📋 연도별 상세 통계")
-    styled_df = yearly_stats.style.background_gradient(
-        subset=['취업률'], cmap='RdYlGn'
-    ).format({
-        '취업률': '{:.1f}%',
-        '전체인원': '{:,}명',
-        '취업자수': '{:,}명',
-        '미취업자수': '{:,}명'
-    })
-    st.dataframe(styled_df, use_container_width=True)
+            # 합격/불합격 현황
+            fig.add_trace(
+                go.Bar(x=round_stats['회차'], y=round_stats['합격자수'],
+                      name='합격자수', marker_color='lightgreen',
+                      text=round_stats['합격자수'],
+                      textposition='inside'),
+                row=2, col=1
+            )
+            fig.add_trace(
+                go.Bar(x=round_stats['회차'], y=round_stats['불합격자수'],
+                      name='불합격자수', marker_color='lightcoral',
+                      text=round_stats['불합격자수'],
+                      textposition='inside'),
+                row=2, col=1
+            )
 
+            # 평균점수 추이
+            fig.add_trace(
+                go.Scatter(x=round_stats['회차'], y=round_stats['평균점수'],
+                          mode='lines+markers+text', name='평균점수',
+                          line=dict(color='orange', width=3),
+                          text=[f"{x:.1f}" for x in round_stats['평균점수']],
+                          textposition='top center'),
+                row=2, col=2
+            )
 
-def render_regional_analysis(db: SupabaseDB):
-    """지역별 분석 탭"""
-    st.subheader("🗺️ 지역별 취업 현황 분석")
+            fig.update_layout(
+                height=800,
+                showlegend=True,
+                title_text="정보컴퓨터공학부 회차별 종합 현황",
+                xaxis=dict(dtick=1),
+                xaxis2=dict(dtick=1),
+                xaxis3=dict(dtick=1),
+                xaxis4=dict(dtick=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-    regional_stats = get_regional_stats(db)
-    if regional_stats.empty:
-        show_message("지역별 데이터가 없습니다.", "warning")
-        return
+            # 상세 통계 테이블
+            st.subheader("📋 회차별 상세 통계")
+            round_stats_sorted = round_stats.sort_values('회차', ascending=False)
+            st.dataframe(round_stats_sorted, use_container_width=True, hide_index=True)
 
-    bar_chart, pie_chart = create_regional_chart(regional_stats)
+            # Lv.별 상세 통계
+            st.subheader("📊 회차별 Lv. 상세 통계")
+            level_pivot_sorted = level_pivot.sort_index(ascending=False)
+            st.dataframe(level_pivot_sorted, use_container_width=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(bar_chart, use_container_width=True)
-    with col2:
-        st.plotly_chart(pie_chart, use_container_width=True)
+    # 탭 3: 정보컴퓨터공학부 학년별 통계
+    with tab3:
+        st.header("🎓 정보컴퓨터공학부 학년별 통계")
 
+        cse_df = filtered_df[
+            (filtered_df['학과'] == '정보컴퓨터공학부') |
+            (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
+            (filtered_df['학과'] == '전기컴퓨터공학부')
+        ]
 
-def render_company_analysis(db: SupabaseDB):
-    """기업 분석 탭"""
-    st.subheader("🏢 기업 유형별 취업 현황 분석")
+        if cse_df.empty:
+            st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
+        else:
+            # 회차별 학년별 통계
+            st.subheader("📊 회차별 학년별 통계")
 
-    company_type_stats, company_size_stats = get_company_stats(db)
+            # 회차별 학년별 응시자수 및 합격률
+            grade_round_stats = cse_df.groupby(['회차', '학년']).agg({
+                '이름': 'count',
+                '합격여부_binary': ['sum', 'mean'],
+                '총점': 'mean'
+            }).reset_index()
 
-    if not company_type_stats.empty:
-        type_chart, size_chart = create_company_charts(company_type_stats, company_size_stats)
+            grade_round_stats.columns = ['회차', '학년', '응시자수', '합격자수', '합격률', '평균점수']
+            grade_round_stats['합격률'] = (grade_round_stats['합격률'] * 100).round(1)
+
+            # 회차별 학년별 응시자수 그래프
+            fig1 = go.Figure()
+            for grade in sorted(grade_round_stats['학년'].unique()):
+                grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                fig1.add_trace(go.Bar(
+                    x=grade_data['회차'],
+                    y=grade_data['응시자수'],
+                    name=f'{grade}학년',
+                    text=grade_data['응시자수'],
+                    textposition='auto'
+                ))
+
+            fig1.update_layout(
+                title_text="회차별 학년별 응시자수",
+                xaxis_title="회차",
+                yaxis_title="응시자수",
+                barmode='group',
+                showlegend=True,
+                xaxis=dict(dtick=1)
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+
+            # 회차별 학년별 상세 통계 테이블
+            st.subheader("📋 회차별 학년별 상세 통계")
+            display_stats = grade_round_stats.copy()
+            display_stats['합격률'] = display_stats['합격률'].astype(str) + '%'
+            display_stats['평균점수'] = display_stats['평균점수'].round(1)
+            display_stats = display_stats.sort_values(['회차', '학년'], ascending=[False, False])
+            st.dataframe(display_stats, use_container_width=True, hide_index=True)
+
+            # 학년별 통계
+            st.subheader("🎓 학년별 종합 통계")
+
+            # 학년별 통계
+            grade_stats = cse_df.groupby('학년').agg({
+                '이름': 'count',
+                '합격여부_binary': ['sum', 'mean'],
+                '총점': ['mean', 'std']
+            }).round(2)
+            grade_stats.columns = ['응시자수', '합격자수', '합격률', '평균점수', '점수표준편차']
+            grade_stats['합격률_pct'] = (grade_stats['합격률'] * 100).round(1)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # 학년별 응시자수 및 합격률
+                fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+
+                fig1.add_trace(
+                    go.Bar(x=grade_stats.index, y=grade_stats['응시자수'],
+                          name='응시자수', marker_color='lightblue',
+                          text=grade_stats['응시자수'],
+                          textposition='inside'),
+                    secondary_y=False,
+                )
+
+                fig1.add_trace(
+                    go.Scatter(x=grade_stats.index, y=grade_stats['합격률_pct'],
+                              mode='lines+markers+text', name='합격률(%)',
+                              line=dict(color='red', width=3),
+                              text=[f"{x:.1f}%" for x in grade_stats['합격률_pct']],
+                              textposition='top center'),
+                    secondary_y=True,
+                )
+
+                fig1.update_xaxes(title_text="학년")
+                fig1.update_yaxes(title_text="응시자수", secondary_y=False)
+                fig1.update_yaxes(title_text="합격률(%)", secondary_y=True)
+                fig1.update_layout(
+                    title_text="학년별 응시자수 및 합격률",
+                    showlegend=True
+                )
+
+                st.plotly_chart(fig1, use_container_width=True)
+
+            with col2:
+                # 학년별 평균점수
+                fig2 = px.bar(x=grade_stats.index, y=grade_stats['평균점수'],
+                             title="학년별 평균점수",
+                             labels={'x': '학년', 'y': '평균점수'})
+                fig2.update_traces(
+                    marker_color='lightgreen',
+                    text=grade_stats['평균점수'].round(1),
+                    textposition='inside'
+                )
+                fig2.update_layout(
+                    showlegend=False,
+                    yaxis_title="평균점수"
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # 상세 통계 테이블
+            st.subheader("📋 학년별 상세 통계")
+            display_stats = grade_stats.copy()
+            display_stats['합격률'] = display_stats['합격률_pct'].astype(str) + '%'
+            display_stats = display_stats.drop('합격률_pct', axis=1)
+            st.dataframe(display_stats, use_container_width=True)
+
+    # 탭 4: PCCP 레벨 정보
+    with tab4:
+        st.header("📚 PCCP 레벨 정보")
+
+        # 1. PCCP 레벨별 점수 및 의미
+        st.subheader("📊 PCCP 레벨별 점수 및 의미")
+
+        # PCCP 레벨별 점수 및 의미 테이블
+        pccp_levels_data = {
+            'PCCP 레벨': ['Lv.1', 'Lv.2', 'Lv.3', 'Lv.4', 'Lv.5'],
+            '점수 구간': ['400~499점', '500~599점', '600~749점', '750~899점', '900~1000점'],
+            '의미': ['프로그래밍 기초 문법 이해', '기본 알고리즘 이해', '중급 알고리즘 활용', '고급 알고리즘 구현', '전문가 수준'],
+            '상세 설명': [
+                '기본 입출력, 조건문, 반복문, 배열 다루기',
+                '기본 정렬, 탐색, 스택/큐, 재귀 기초',
+                'BFS/DFS, 동적계획법, 그리디, 이분탐색',
+                '고급 그래프, 세그먼트 트리, 최단경로',
+                '네트워크 플로우, 문자열 알고리즘, 고급 자료구조'
+            ],
+            '합격 전략': ['2문제 완전 해결', '2.5문제 해결', '3문제 해결', '3.5문제 해결', '4문제 완전 해결']
+        }
+
+        pccp_levels_df = pd.DataFrame(pccp_levels_data)
+        st.dataframe(pccp_levels_df, use_container_width=True)
+
+        # 2. 기업별 요구 수준 비교
+        st.subheader("🏢 기업별 요구 수준 비교")
+
+        company_requirements_data = {
+            '기업 분류': ['스타트업/중소기업', '대기업/금융권', '네카라쿠배', '해외 빅테크'],
+            '백준 티어 요구': ['Silver ~ Gold', 'Gold ~ Platinum', 'Platinum ~ Diamond', 'Diamond+'],
+            'PCCP 레벨 요구': ['Lv.2 ~ Lv.3', 'Lv.3 ~ Lv.4', 'Lv.4 ~ Lv.5', 'Lv.5']
+        }
+
+        company_requirements_df = pd.DataFrame(company_requirements_data)
+        st.dataframe(company_requirements_df, use_container_width=True)
+
+        # 3. 추가 설명
+        st.info("💡 **참고사항**: PCCP 레벨은 프로그래밍 역량을 객관적으로 평가하는 지표로, 취업 시 기업에서 요구하는 코딩 역량 수준을 파악하는 데 도움이 됩니다.")
+
+        # 4. 학습 가이드
+        st.subheader("🎯 학습 가이드")
 
         col1, col2 = st.columns(2)
-        with col1:
-            st.plotly_chart(type_chart, use_container_width=True)
-        with col2:
-            if not company_size_stats.empty:
-                st.plotly_chart(size_chart, use_container_width=True)
 
-        # 데이터 표
-        st.subheader("📊 상세 데이터")
-
-        col1, col2 = st.columns(2)
         with col1:
-            st.write("**🏢 기업 유형별 취업자 분포**")
-            styled_company_type = company_type_stats.style.background_gradient(
-                subset=['취업자수'], cmap='Blues'
-            ).format({
-                '취업자수': '{:,}명',
-                '비율': '{:.1f}%'
-            })
-            st.dataframe(styled_company_type, use_container_width=True)
+            st.markdown("""
+            **초급 (Lv.1-2)**
+            - 프로그래밍 언어 기초 문법
+            - 기본 자료구조 (배열, 문자열)
+            - 간단한 알고리즘 (정렬, 탐색)
+            """)
+
+            st.markdown("""
+            **중급 (Lv.3)**
+            - 그래프 알고리즘 (BFS/DFS)
+            - 동적계획법 기초
+            - 그리디 알고리즘
+            """)
 
         with col2:
-            if not company_size_stats.empty:
-                st.write("**🏭 회사 규모별 취업자 분포**")
-                styled_company_size = company_size_stats.style.background_gradient(
-                    subset=['취업자수'], cmap='Greens'
-                ).format({
-                    '취업자수': '{:,}명',
-                    '비율': '{:.1f}%'
-                })
-                st.dataframe(styled_company_size, use_container_width=True)
-    else:
-        show_message("기업 분석 데이터가 없습니다.", "warning")
+            st.markdown("""
+            **고급 (Lv.4)**
+            - 고급 그래프 알고리즘
+            - 세그먼트 트리
+            - 최단경로 알고리즘
+            """)
 
+            st.markdown("""
+            **전문가 (Lv.5)**
+            - 네트워크 플로우
+            - 문자열 알고리즘
+            - 고급 자료구조
+            """)
 
-def render_footer():
-    """푸터"""
-    st.markdown(f'''
-    <div style="text-align: center; padding: 2rem 0; color: #999; border-top: 1px solid #eee;">
-        <p>📊 {app_config.APP_TITLE} {app_config.APP_VERSION} |
-        ⚡ Powered by Streamlit & Plotly & Supabase |
-        📅 2020 ~ 2024</p>
-    </div>
-    ''', unsafe_allow_html=True)
+    # 관리자 전용 탭들
+    if st.session_state.is_admin:
+        # 탭 5: 학생별 성과 분석
+        with tab5:
+            st.header("👨‍🎓 학생별 성과 분석")
 
+            # 3회 이상 응시자 찾기
+            student_attempts = filtered_df.groupby(['이름', '이메일', '학번']).size().reset_index(name='응시횟수')
+            frequent_test_takers = student_attempts[student_attempts['응시횟수'] >= 3]
 
-# =====================
-# 메인 함수
-# =====================
+            if frequent_test_takers.empty:
+                st.info("3회 이상 응시한 학생이 없습니다.")
+            else:
+                st.subheader(f"📋 3회 이상 응시자 목록 ({len(frequent_test_takers)}명)")
 
-def main():
-    """메인 애플리케이션"""
-    # 초기화
-    init_app()
-    load_css()
+                # 3회 이상 응시자의 상세 정보
+                detailed_info = []
+                for _, row in frequent_test_takers.iterrows():
+                    student_data = filtered_df[
+                        (filtered_df['이름'] == row['이름']) &
+                        (filtered_df['이메일'] == row['이메일']) &
+                        (filtered_df['학번'] == row['학번'])
+                    ].sort_values('회차')
 
-    # Supabase 연결
-    db = get_supabase_client()
+                    passes = len(student_data[student_data['합격여부'] == '합격'])
+                    avg_score = student_data['총점'].mean()
+                    max_score = student_data['총점'].max()
 
-    if not db.is_connected():
-        st.error(f"🔴 Supabase 연결 실패")
-        st.error(f"오류: {db.error_message}")
-        st.info("""
-        ### 설정 방법:
-        1. Supabase 프로젝트 생성 (https://supabase.com)
-        2. .env 파일 생성 후 SUPABASE_URL과 SUPABASE_KEY 입력
-        3. 다음 명령어 실행:
-           - `python init_database.py` (데이터베이스 초기화)
-           - `python load_csv_data.py` (CSV 데이터 로드)
-        4. Streamlit 앱 재실행
-        """)
-        st.stop()
+                    detailed_info.append({
+                        '이름': row['이름'],
+                        '이메일': row['이메일'],
+                        '학번': row['학번'],
+                        '학과': student_data.iloc[0]['학과'],
+                        '학년': student_data.iloc[0]['학년'],
+                        '응시횟수': row['응시횟수'],
+                        '합격횟수': passes,
+                        '평균점수': round(avg_score, 1),
+                        '최고점수': max_score
+                    })
 
-    # 헤더
-    show_header()
+                detailed_df = pd.DataFrame(detailed_info)
+                st.dataframe(detailed_df, use_container_width=True)
 
-    # 사이드바
-    setup_sidebar()
+                # 점수 추이 분석
+                st.subheader("📈 점수 추이 분석")
 
-    # 데이터 로드
-    stats = get_overall_stats(db)
-    yearly_stats = get_yearly_stats(db)
-    trend = get_trend_analysis(yearly_stats)
+                # 학생 선택
+                selected_student = st.selectbox(
+                    "분석할 학생 선택",
+                    options=[(f"{row['이름']} ({row['학번']}) - {row['이메일']}") for _, row in frequent_test_takers.iterrows()],
+                    help="점수 추이를 확인할 학생을 선택하세요"
+                )
 
-    # KPI 메트릭
-    create_kpi_metrics(stats)
+                if selected_student:
+                    # 선택된 학생의 정보 파싱
+                    parts = selected_student.split(' - ')
+                    email = parts[1]
+                    name_and_id = parts[0]
+                    student_name = name_and_id.split(' (')[0]
+                    student_id = name_and_id.split('(')[1].split(')')[0]
 
-    # 인사이트
-    show_insights(trend, stats)
+                    student_history = filtered_df[
+                        (filtered_df['이름'] == student_name) &
+                        (filtered_df['이메일'] == email) &
+                        (filtered_df['학번'] == student_id)
+                    ].sort_values('회차')
 
-    # 탭 구성
-    tabs = st.tabs(["📈 연도별 분석", "🗺️ 지역별 분석", "🏢 기업별 분석"])
+                    # 점수 추이 그래프
+                    fig = go.Figure()
 
-    with tabs[0]:
-        render_yearly_analysis(db)
+                    fig.add_trace(go.Scatter(
+                        x=student_history['회차'],
+                        y=student_history['총점'],
+                        mode='lines+markers',
+                        name='점수',
+                        line=dict(color='blue', width=3),
+                        marker=dict(size=10)
+                    ))
 
-    with tabs[1]:
-        render_regional_analysis(db)
+                    # 합격선 표시 (일반적으로 400점 이상을 합격으로 가정)
+                    fig.add_hline(y=400, line_dash="dash", line_color="red",
+                                 annotation_text="합격선 (추정)")
 
-    with tabs[2]:
-        render_company_analysis(db)
+                    fig.update_layout(
+                        title=f"{student_name}({student_id}) 점수 추이",
+                        xaxis_title="회차",
+                        yaxis_title="점수",
+                        height=400,
+                        xaxis=dict(dtick=1)
+                    )
 
-    # 푸터
-    render_footer()
+                    st.plotly_chart(fig, use_container_width=True)
 
+                    # 상세 데이터
+                    st.subheader("📋 회차별 상세 데이터")
+                    display_history = student_history[['회차', '시험과목', '총점', '합격여부', '등급(Lv.)']].copy()
+                    st.dataframe(display_history, use_container_width=True)
+
+        # 탭 6: 상세 데이터
+        with tab6:
+            st.header("📋 전체 상세 데이터")
+
+            # 데이터 요약
+            st.subheader("📊 필터링된 데이터 요약")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("총 레코드 수", len(filtered_df))
+            with col2:
+                st.metric("고유 학생 수", filtered_df.groupby(['이름', '학번']).ngroups)
+            with col3:
+                st.metric("회차 범위", f"{filtered_df['회차'].min()} - {filtered_df['회차'].max()}")
+
+            # 검색 기능
+            st.subheader("🔍 데이터 검색")
+            search_term = st.text_input("학생 이름 또는 학번으로 검색", placeholder="예: 김철수 또는 202155619")
+
+            display_df = filtered_df.copy()
+            if search_term:
+                display_df = display_df[
+                    (display_df['이름'].str.contains(search_term, case=False, na=False)) |
+                    (display_df['학번'].astype(str).str.contains(search_term, case=False, na=False))
+                ]
+
+            # 정렬 옵션
+            sort_col = st.selectbox(
+                "정렬 기준",
+                options=['회차', '총점', '이름', '학과', '학년'],
+                index=0
+            )
+            sort_order = st.radio("정렬 순서", ["오름차순", "내림차순"], horizontal=True)
+
+            ascending = True if sort_order == "오름차순" else False
+            display_df = display_df.sort_values(sort_col, ascending=ascending)
+
+            # 데이터 표시
+            st.dataframe(
+                display_df[['회차', '시험과목', '이름', '학과', '학년', '총점', '합격여부', '등급(Lv.)']],
+                use_container_width=True,
+                height=400
+            )
+
+            # 다운로드 기능
+            csv = display_df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 필터링된 데이터 다운로드 (CSV)",
+                data=csv,
+                file_name=f"pcc_filtered_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+
+        # 탭 7: 성장 추이 분석
+        with tab7:
+            st.header("📈 성장 추이 분석")
+
+            # 1. 전체 성적 추이
+            st.subheader("📊 전체 성적 추이")
+
+            # 회차별 평균 점수 추이
+            round_trend = filtered_df.groupby('회차').agg({
+                '총점': ['mean', 'std'],
+                '합격여부_binary': 'mean'
+            }).reset_index()
+            round_trend.columns = ['회차', '평균점수', '표준편차', '합격률']
+            round_trend['합격률'] = round_trend['합격률'] * 100
+
+            fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
+
+            fig_trend.add_trace(
+                go.Scatter(
+                    x=round_trend['회차'],
+                    y=round_trend['평균점수'],
+                    mode='lines+markers+text',
+                    name='평균점수',
+                    line=dict(color='blue', width=3),
+                    text=round_trend['평균점수'].round(1),
+                    textposition='top center'
+                ),
+                secondary_y=False
+            )
+
+            fig_trend.add_trace(
+                go.Scatter(
+                    x=round_trend['회차'],
+                    y=round_trend['합격률'],
+                    mode='lines+markers+text',
+                    name='합격률(%)',
+                    line=dict(color='green', width=3),
+                    text=round_trend['합격률'].round(1).astype(str) + '%',
+                    textposition='bottom center'
+                ),
+                secondary_y=True
+            )
+
+            fig_trend.update_layout(
+                title_text="회차별 평균점수 및 합격률 추이",
+                showlegend=True,
+                xaxis=dict(tickmode='linear', tick0=1, dtick=1)
+            )
+
+            fig_trend.update_xaxes(title_text="회차")
+            fig_trend.update_yaxes(title_text="평균점수", secondary_y=False)
+            fig_trend.update_yaxes(title_text="합격률(%)", secondary_y=True)
+
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            # 2. 재응시 학생 분석
+            st.subheader("🔄 재응시 학생 분석")
+
+            # 재응시 학생 식별
+            retake_students = filtered_df.groupby(['이름', '학번']).filter(lambda x: len(x) > 1)
+
+            if not retake_students.empty:
+                # 재응시 학생들의 점수 변화
+                student_progress = retake_students.groupby(['이름', '학번']).agg({
+                    '총점': ['first', 'last', 'mean'],
+                    '회차': ['first', 'last']
+                }).reset_index()
+
+                student_progress.columns = ['이름', '학번', '첫시험점수', '최근시험점수', '평균점수', '첫시험회차', '최근시험회차']
+                student_progress['점수향상도'] = student_progress['최근시험점수'] - student_progress['첫시험점수']
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    # 점수 향상도 분포
+                    fig_improvement = go.Figure()
+
+                    fig_improvement.add_trace(go.Histogram(
+                        x=student_progress['점수향상도'],
+                        nbinsx=20,
+                        name='점수 향상도 분포'
+                    ))
+
+                    fig_improvement.update_layout(
+                        title_text="재응시 학생 점수 향상도 분포",
+                        xaxis_title="점수 향상도",
+                        yaxis_title="학생 수",
+                        xaxis=dict(tickmode='linear', dtick=5)
+                    )
+
+                    st.plotly_chart(fig_improvement, use_container_width=True)
+
+                with col2:
+                    # 향상도 통계
+                    improvement_stats = {
+                        '평균 향상도': student_progress['점수향상도'].mean(),
+                        '최대 향상도': student_progress['점수향상도'].max(),
+                        '최소 향상도': student_progress['점수향상도'].min(),
+                        '향상도 표준편차': student_progress['점수향상도'].std(),
+                        '향상한 학생 비율': (student_progress['점수향상도'] > 0).mean() * 100
+                    }
+
+                    for key, value in improvement_stats.items():
+                        st.metric(key, f"{value:.1f}")
+
+                # 상세 통계
+                st.subheader("📋 재응시 학생 상세 통계")
+                st.dataframe(
+                    student_progress.sort_values('점수향상도', ascending=False),
+                    use_container_width=True
+                )
+            else:
+                st.info("재응시 학생 데이터가 없습니다.")
+
+            # 3. 학년별 성적 추이
+            st.subheader("🎓 학년별 성적 추이")
+
+            # 학년-회차별 통계
+            grade_round_stats = filtered_df.groupby(['학년', '회차']).agg({
+                '총점': 'mean',
+                '합격여부_binary': 'mean'
+            }).reset_index()
+
+            # 학년별 평균점수 추이
+            fig_grade_trend = go.Figure()
+
+            for grade in sorted(grade_round_stats['학년'].unique()):
+                grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                fig_grade_trend.add_trace(go.Scatter(
+                    x=grade_data['회차'],
+                    y=grade_data['총점'],
+                    mode='lines+markers+text',
+                    name=f'{grade}학년',
+                    text=grade_data['총점'].round(1),
+                    textposition='top center'
+                ))
+
+            fig_grade_trend.update_layout(
+                title_text="학년별 평균점수 추이",
+                xaxis_title="회차",
+                yaxis_title="평균점수",
+                showlegend=True,
+                xaxis=dict(tickmode='linear', tick0=1, dtick=1)
+            )
+
+            st.plotly_chart(fig_grade_trend, use_container_width=True)
+
+            # 학년별 상세 통계
+            st.subheader("📊 학년별 상세 통계")
+            grade_stats = filtered_df.groupby('학년').agg({
+                '총점': ['mean', 'std', 'min', 'max'],
+                '합격여부_binary': 'mean'
+            }).round(2)
+            grade_stats.columns = ['평균점수', '표준편차', '최저점수', '최고점수', '합격률']
+            grade_stats['합격률'] = (grade_stats['합격률'] * 100).round(1).astype(str) + '%'
+            st.dataframe(grade_stats, use_container_width=True)
+
+        # 탭 8: 정보컴퓨터공학부 3회차-5회차 비교 분석
+        with tab8:
+            st.header("🔄 정보컴퓨터공학부 3회차-5회차 비교 분석")
+
+            # 정보컴퓨터공학부/전기컴퓨터공학부 데이터만 필터링
+            cse_df = filtered_df[
+                (filtered_df['학과'] == '정보컴퓨터공학부') |
+                (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
+                (filtered_df['학과'] == '전기컴퓨터공학부')
+            ]
+
+            # 3회차와 5회차 데이터 필터링
+            round3_df = cse_df[cse_df['회차'] == 3]
+            round5_df = cse_df[cse_df['회차'] == 5]
+
+            if not round3_df.empty and not round5_df.empty:
+                # 1. 전체 성적 비교
+                st.subheader("📊 전체 성적 비교")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    # 3회차 통계
+                    round3_stats = {
+                        '응시자수': len(round3_df),
+                        '평균점수': round3_df['총점'].mean(),
+                        '합격률': (round3_df['합격여부_binary'].mean() * 100),
+                        '최고점수': round3_df['총점'].max(),
+                        '최저점수': round3_df['총점'].min()
+                    }
+
+                    st.metric("3회차 응시자수", f"{round3_stats['응시자수']}명")
+                    st.metric("3회차 평균점수", f"{round3_stats['평균점수']:.1f}점")
+                    st.metric("3회차 합격률", f"{round3_stats['합격률']:.1f}%")
+                    st.metric("3회차 최고점수", f"{round3_stats['최고점수']:.1f}점")
+                    st.metric("3회차 최저점수", f"{round3_stats['최저점수']:.1f}점")
+
+                with col2:
+                    # 5회차 통계
+                    round5_stats = {
+                        '응시자수': len(round5_df),
+                        '평균점수': round5_df['총점'].mean(),
+                        '합격률': (round5_df['합격여부_binary'].mean() * 100),
+                        '최고점수': round5_df['총점'].max(),
+                        '최저점수': round5_df['총점'].min()
+                    }
+
+                    st.metric("5회차 응시자수", f"{round5_stats['응시자수']}명")
+                    st.metric("5회차 평균점수", f"{round5_stats['평균점수']:.1f}점")
+                    st.metric("5회차 합격률", f"{round5_stats['합격률']:.1f}%")
+                    st.metric("5회차 최고점수", f"{round5_stats['최고점수']:.1f}점")
+                    st.metric("5회차 최저점수", f"{round5_stats['최저점수']:.1f}점")
+
+                # 2. 학년별 성적 비교
+                st.subheader("🎓 학년별 성적 비교")
+
+                # 학년별 통계 계산
+                grade_stats = pd.DataFrame()
+
+                for grade in sorted(cse_df['학년'].unique()):
+                    grade3_df = round3_df[round3_df['학년'] == grade]
+                    grade5_df = round5_df[round5_df['학년'] == grade]
+
+                    if not grade3_df.empty and not grade5_df.empty:
+                        grade_stats = pd.concat([grade_stats, pd.DataFrame({
+                            '학년': [grade],
+                            '3회차_응시자수': [len(grade3_df)],
+                            '3회차_평균점수': [grade3_df['총점'].mean()],
+                            '3회차_합격률': [grade3_df['합격여부_binary'].mean() * 100],
+                            '5회차_응시자수': [len(grade5_df)],
+                            '5회차_평균점수': [grade5_df['총점'].mean()],
+                            '5회차_합격률': [grade5_df['합격여부_binary'].mean() * 100],
+                            '평균점수_변화': [grade5_df['총점'].mean() - grade3_df['총점'].mean()],
+                            '합격률_변화': [(grade5_df['합격여부_binary'].mean() - grade3_df['합격여부_binary'].mean()) * 100]
+                        })])
+
+                # 학년별 평균점수 비교 그래프
+                fig_grade_score = go.Figure()
+
+                fig_grade_score.add_trace(go.Bar(
+                    x=grade_stats['학년'],
+                    y=grade_stats['3회차_평균점수'],
+                    name='3회차',
+                    text=grade_stats['3회차_평균점수'].round(1),
+                    textposition='auto'
+                ))
+
+                fig_grade_score.add_trace(go.Bar(
+                    x=grade_stats['학년'],
+                    y=grade_stats['5회차_평균점수'],
+                    name='5회차',
+                    text=grade_stats['5회차_평균점수'].round(1),
+                    textposition='auto'
+                ))
+
+                fig_grade_score.update_layout(
+                    title_text="학년별 평균점수 비교",
+                    xaxis_title="학년",
+                    yaxis_title="평균점수",
+                    barmode='group',
+                    showlegend=True
+                )
+
+                st.plotly_chart(fig_grade_score, use_container_width=True)
+
+                # 학년별 합격률 비교 그래프
+                fig_grade_pass = go.Figure()
+
+                fig_grade_pass.add_trace(go.Bar(
+                    x=grade_stats['학년'],
+                    y=grade_stats['3회차_합격률'],
+                    name='3회차',
+                    text=grade_stats['3회차_합격률'].round(1).astype(str) + '%',
+                    textposition='auto'
+                ))
+
+                fig_grade_pass.add_trace(go.Bar(
+                    x=grade_stats['학년'],
+                    y=grade_stats['5회차_합격률'],
+                    name='5회차',
+                    text=grade_stats['5회차_합격률'].round(1).astype(str) + '%',
+                    textposition='auto'
+                ))
+
+                fig_grade_pass.update_layout(
+                    title_text="학년별 합격률 비교",
+                    xaxis_title="학년",
+                    yaxis_title="합격률(%)",
+                    barmode='group',
+                    showlegend=True
+                )
+
+                st.plotly_chart(fig_grade_pass, use_container_width=True)
+
+                # 3. 주요 인사이트
+                st.subheader("💡 주요 인사이트")
+
+                # 평균점수 변화 분석
+                avg_score_change = round5_stats['평균점수'] - round3_stats['평균점수']
+                st.metric(
+                    "전체 평균점수 변화",
+                    f"{avg_score_change:+.1f}점",
+                    delta=f"{avg_score_change:+.1f}점"
+                )
+
+                # 합격률 변화 분석
+                pass_rate_change = round5_stats['합격률'] - round3_stats['합격률']
+                st.metric(
+                    "전체 합격률 변화",
+                    f"{pass_rate_change:+.1f}%",
+                    delta=f"{pass_rate_change:+.1f}%"
+                )
+
+                # 학년별 변화 분석
+                st.subheader("📊 학년별 변화 분석")
+                grade_stats['평균점수_변화'] = grade_stats['평균점수_변화'].round(1)
+                grade_stats['합격률_변화'] = grade_stats['합격률_변화'].round(1)
+                grade_stats['3회차_합격률'] = grade_stats['3회차_합격률'].round(1).astype(str) + '%'
+                grade_stats['5회차_합격률'] = grade_stats['5회차_합격률'].round(1).astype(str) + '%'
+                grade_stats['합격률_변화'] = grade_stats['합격률_변화'].astype(str) + '%'
+
+                st.dataframe(
+                    grade_stats[[
+                        '학년', '3회차_응시자수', '3회차_평균점수', '3회차_합격률',
+                        '5회차_응시자수', '5회차_평균점수', '5회차_합격률',
+                        '평균점수_변화', '합격률_변화'
+                    ]],
+                    use_container_width=True
+                )
+
+            else:
+                if round3_df.empty:
+                    st.warning("3회차 데이터가 없습니다.")
+                if round5_df.empty:
+                    st.warning("5회차 데이터가 없습니다.")
+
+    # 탭 9: 데이터 관리 (관리자 전용)
+    if st.session_state.is_admin:
+        with tab9:
+            st.header("➕ 데이터 관리")
+
+            supabase = init_supabase()
+
+            # 데이터 추가 섹션
+            st.subheader("📝 새 데이터 추가")
+
+            with st.form("add_data_form"):
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    new_round = st.number_input("회차", min_value=1, value=1)
+                    new_no = st.number_input("번호", min_value=1, value=1)
+                    new_subject = st.text_input("시험과목")
+                    new_name = st.text_input("이름")
+
+                with col2:
+                    new_email = st.text_input("이메일")
+                    new_pass_status = st.selectbox("합격여부", ["합격", "불합격"])
+                    new_score = st.number_input("총점", min_value=0, max_value=1000, value=0)
+
+                with col3:
+                    new_level = st.text_input("등급", value="")
+                    new_department = st.text_input("학과", value="")
+                    new_student_id = st.text_input("학번", value="")
+                    new_grade = st.number_input("학년", min_value=1, max_value=4, value=1)
+
+                submitted = st.form_submit_button("추가")
+
+                if submitted:
+                    new_data = {
+                        "회차": int(new_round),
+                        "no": int(new_no),
+                        "시험과목": new_subject,
+                        "이름": new_name,
+                        "이메일": new_email,
+                        "합격여부": new_pass_status,
+                        "총점": int(new_score),
+                        "등급": new_level if new_level else None,
+                        "학과": new_department if new_department else None,
+                        "학번": new_student_id if new_student_id else None,
+                        "학년": int(new_grade) if new_grade else None
+                    }
+
+                    success, message = insert_pcc_result(supabase, new_data)
+
+                    if success:
+                        st.success(message)
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+            st.markdown("---")
+
+            # 데이터베이스 통계
+            st.subheader("📊 데이터베이스 통계")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("총 레코드 수", len(df))
+            with col2:
+                st.metric("고유 학생 수", df['학번'].nunique())
+            with col3:
+                st.metric("최근 업데이트", pd.Timestamp.now().strftime('%Y-%m-%d %H:%M'))
 
 if __name__ == "__main__":
     main()
