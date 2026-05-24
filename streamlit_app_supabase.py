@@ -819,6 +819,166 @@ def main():
             display_nr.columns = ['회차', '신규 응시자(명)', '재응시자(명)', '전체(명)', '신규 비율', '재응시 비율']
             st.dataframe(display_nr, use_container_width=True, hide_index=True)
 
+            # 회차별 재응시자 등급 상승 분석
+            st.subheader("⬆️ 회차별 재응시자 등급 상승 현황")
+            st.caption("재응시자 중 이전 응시 대비 등급(Lv.)이 상승한 학생만 표시합니다.")
+
+            # 재응시자 등급 변화 분석
+            grade_upgrade_data = []
+
+            for round_num in sorted_rounds[1:]:  # 2회차부터 분석 가능
+                # 현재 회차 응시자
+                current_students = cse_df[cse_df['회차'] == round_num][['이름', '학번', '등급(Lv.)', '총점']].copy()
+                # 이전 회차들 응시자 (가장 최근 이전 기록 사용)
+                previous_all = cse_df[cse_df['회차'] < round_num].sort_values('회차', ascending=False)
+                previous_latest = previous_all.drop_duplicates(subset=['이름', '학번'], keep='first')[['이름', '학번', '등급(Lv.)', '총점']].copy()
+
+                if previous_latest.empty or current_students.empty:
+                    continue
+
+                # 재응시자만 추출 (이전에 응시한 적 있는 학생)
+                merged = current_students.merge(
+                    previous_latest, on=['이름', '학번'], suffixes=('_현재', '_이전')
+                )
+
+                if merged.empty:
+                    grade_upgrade_data.append({
+                        '회차': round_num,
+                        '재응시자수': 0,
+                        '등급상승자수': 0,
+                        '등급상승률': 0,
+                        '점수상승자수': 0,
+                        '상승자_목록': []
+                    })
+                    continue
+
+                # 등급 비교 (등급이 '없음'이 아닌 경우만)
+                merged_valid = merged[
+                    (merged['등급(Lv.)_현재'] != '없음') &
+                    (merged['등급(Lv.)_이전'] != '없음')
+                ].copy()
+
+                retake_count = len(merged)
+
+                if merged_valid.empty:
+                    grade_upgrade_data.append({
+                        '회차': round_num,
+                        '재응시자수': retake_count,
+                        '등급상승자수': 0,
+                        '등급상승률': 0,
+                        '점수상승자수': int((merged['총점_현재'] > merged['총점_이전']).sum()),
+                        '상승자_목록': []
+                    })
+                    continue
+
+                # 등급 상승 판별 (Lv. 숫자 비교)
+                def extract_level(lv_str):
+                    try:
+                        return int(str(lv_str).replace('Lv.', '').replace('lv.', '').strip())
+                    except (ValueError, AttributeError):
+                        return 0
+
+                merged_valid['레벨_현재'] = merged_valid['등급(Lv.)_현재'].apply(extract_level)
+                merged_valid['레벨_이전'] = merged_valid['등급(Lv.)_이전'].apply(extract_level)
+                merged_valid['등급상승'] = merged_valid['레벨_현재'] > merged_valid['레벨_이전']
+
+                upgrade_students = merged_valid[merged_valid['등급상승']]
+                score_up_count = int((merged['총점_현재'] > merged['총점_이전']).sum())
+
+                upgrade_list = []
+                for _, row in upgrade_students.iterrows():
+                    upgrade_list.append({
+                        '이름': row['이름'],
+                        '학번': row['학번'],
+                        '이전등급': row['등급(Lv.)_이전'],
+                        '현재등급': row['등급(Lv.)_현재'],
+                        '이전점수': row['총점_이전'],
+                        '현재점수': row['총점_현재'],
+                        '점수변화': row['총점_현재'] - row['총점_이전']
+                    })
+
+                grade_upgrade_data.append({
+                    '회차': round_num,
+                    '재응시자수': retake_count,
+                    '등급상승자수': len(upgrade_students),
+                    '등급상승률': (len(upgrade_students) / retake_count * 100) if retake_count > 0 else 0,
+                    '점수상승자수': score_up_count,
+                    '상승자_목록': upgrade_list
+                })
+
+            if grade_upgrade_data:
+                upgrade_df = pd.DataFrame(grade_upgrade_data)
+
+                # 등급 상승자수 차트
+                fig_upgrade = go.Figure()
+
+                fig_upgrade.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in upgrade_df['회차']],
+                    y=upgrade_df['등급상승자수'],
+                    name='등급 상승자',
+                    marker_color='#2ECC71',
+                    text=[f'{int(v)}명' for v in upgrade_df['등급상승자수']],
+                    textposition='outside'
+                ))
+
+                fig_upgrade.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in upgrade_df['회차']],
+                    y=upgrade_df['재응시자수'] - upgrade_df['등급상승자수'],
+                    name='등급 유지/하락',
+                    marker_color='#BDC3C7',
+                    text=[f'{int(v)}명' for v in (upgrade_df['재응시자수'] - upgrade_df['등급상승자수'])],
+                    textposition='outside'
+                ))
+
+                fig_upgrade.update_layout(
+                    title_text="회차별 재응시자 등급 상승 현황",
+                    xaxis_title="회차",
+                    yaxis_title="인원수 (명)",
+                    barmode='group',
+                    height=400,
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+
+                st.plotly_chart(fig_upgrade, use_container_width=True)
+
+                # 요약 메트릭
+                total_upgrades = upgrade_df['등급상승자수'].sum()
+                total_retakers_all = upgrade_df['재응시자수'].sum()
+                overall_upgrade_rate = (total_upgrades / total_retakers_all * 100) if total_retakers_all > 0 else 0
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("전체 등급 상승자", f"{total_upgrades}명")
+                with col2:
+                    st.metric("등급 상승률", f"{overall_upgrade_rate:.1f}%")
+                with col3:
+                    best_round = upgrade_df.loc[upgrade_df['등급상승자수'].idxmax()]
+                    st.metric("등급 상승 최다 회차", f"{int(best_round['회차'])}회차 ({int(best_round['등급상승자수'])}명)")
+
+                # 등급 상승자 상세 목록
+                all_upgrade_list = []
+                for _, row in upgrade_df.iterrows():
+                    for student in row['상승자_목록']:
+                        student['회차'] = int(row['회차'])
+                        all_upgrade_list.append(student)
+
+                if all_upgrade_list:
+                    st.markdown("**📋 등급 상승자 상세 목록**")
+                    upgrade_detail_df = pd.DataFrame(all_upgrade_list)
+                    upgrade_detail_df = upgrade_detail_df[['회차', '이름', '학번', '이전등급', '현재등급', '이전점수', '현재점수', '점수변화']]
+                    upgrade_detail_df = upgrade_detail_df.sort_values(['회차', '점수변화'], ascending=[True, False])
+                    st.dataframe(upgrade_detail_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("등급이 상승한 재응시자가 없습니다.")
+
+                # 요약 테이블
+                st.markdown("**📋 회차별 등급 상승 요약**")
+                summary_df = upgrade_df[['회차', '재응시자수', '등급상승자수', '등급상승률', '점수상승자수']].copy()
+                summary_df['등급상승률'] = summary_df['등급상승률'].round(1).astype(str) + '%'
+                summary_df.columns = ['회차', '재응시자(명)', '등급 상승(명)', '등급 상승률', '점수 상승(명)']
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
