@@ -637,6 +637,188 @@ def main():
                 display_composition[f'{col}학년(%)'] = (grade_composition_pct[col]).round(1).astype(str) + '%'
             st.dataframe(display_composition, use_container_width=True)
 
+            # 회차별 신규 응시자 vs 재응시자 비율
+            st.subheader("🔄 회차별 신규 응시자 vs 재응시자 비율")
+            st.caption("처음 시험을 보는 학생과 재도전 학생의 비율 변화를 통해 '도전 문화' 형성 여부와 재시도 동기를 파악할 수 있습니다.")
+
+            # 회차별 신규/재응시자 분류
+            sorted_rounds = sorted(cse_df['회차'].unique())
+            new_vs_retake_data = []
+
+            # 각 회차별로 해당 회차 이전에 응시한 적 있는지 판별
+            for round_num in sorted_rounds:
+                current_round_students = cse_df[cse_df['회차'] == round_num][['이름', '학번']].drop_duplicates()
+                previous_rounds_students = cse_df[cse_df['회차'] < round_num][['이름', '학번']].drop_duplicates()
+
+                if previous_rounds_students.empty:
+                    # 첫 회차는 모두 신규
+                    new_count = len(current_round_students)
+                    retake_count = 0
+                else:
+                    # 이전 회차에 응시한 적 있는 학생 = 재응시자
+                    merged = current_round_students.merge(
+                        previous_rounds_students, on=['이름', '학번'], how='left', indicator=True
+                    )
+                    retake_count = len(merged[merged['_merge'] == 'both'])
+                    new_count = len(merged[merged['_merge'] == 'left_only'])
+
+                total = new_count + retake_count
+                new_vs_retake_data.append({
+                    '회차': round_num,
+                    '신규응시자': new_count,
+                    '재응시자': retake_count,
+                    '전체': total,
+                    '신규비율': (new_count / total * 100) if total > 0 else 0,
+                    '재응시비율': (retake_count / total * 100) if total > 0 else 0
+                })
+
+            new_retake_df = pd.DataFrame(new_vs_retake_data)
+
+            # Stacked Bar (비율)
+            col1, col2 = st.columns(2)
+
+            with col1:
+                fig_nr_pct = go.Figure()
+
+                fig_nr_pct.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['신규비율'],
+                    name='신규 응시자',
+                    marker_color='#4ECDC4',
+                    text=[f'{v:.1f}%' for v in new_retake_df['신규비율']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_pct.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['재응시비율'],
+                    name='재응시자',
+                    marker_color='#FF6B6B',
+                    text=[f'{v:.1f}%' for v in new_retake_df['재응시비율']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_pct.update_layout(
+                    title_text="회차별 신규/재응시자 비율 (%)",
+                    xaxis_title="회차",
+                    yaxis_title="비율 (%)",
+                    barmode='stack',
+                    height=400,
+                    showlegend=True,
+                    yaxis=dict(range=[0, 100]),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+
+                st.plotly_chart(fig_nr_pct, use_container_width=True)
+
+            with col2:
+                # Stacked Bar (인원수)
+                fig_nr_count = go.Figure()
+
+                fig_nr_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['신규응시자'],
+                    name='신규 응시자',
+                    marker_color='#4ECDC4',
+                    text=[f'{int(v)}명' for v in new_retake_df['신규응시자']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['재응시자'],
+                    name='재응시자',
+                    marker_color='#FF6B6B',
+                    text=[f'{int(v)}명' for v in new_retake_df['재응시자']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_count.update_layout(
+                    title_text="회차별 신규/재응시자 인원수",
+                    xaxis_title="회차",
+                    yaxis_title="인원수",
+                    barmode='stack',
+                    height=400,
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+
+                st.plotly_chart(fig_nr_count, use_container_width=True)
+
+            # 재응시자 비율 추이 라인차트
+            fig_retake_trend = go.Figure()
+
+            fig_retake_trend.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                y=new_retake_df['재응시비율'],
+                mode='lines+markers+text',
+                name='재응시자 비율',
+                line=dict(color='#FF6B6B', width=3),
+                marker=dict(size=10),
+                text=[f'{v:.1f}%' for v in new_retake_df['재응시비율']],
+                textposition='top center'
+            ))
+
+            fig_retake_trend.update_layout(
+                title_text="재응시자 비율 추이 — 도전 문화 형성 지표",
+                xaxis_title="회차",
+                yaxis_title="재응시자 비율 (%)",
+                height=350,
+                showlegend=False,
+                yaxis=dict(range=[0, max(new_retake_df['재응시비율'].max() * 1.3, 10)])
+            )
+
+            st.plotly_chart(fig_retake_trend, use_container_width=True)
+
+            # 도전 문화 인사이트
+            if len(new_retake_df) >= 2:
+                first_retake_pct = new_retake_df.iloc[1]['재응시비율']  # 2회차부터 의미있음
+                last_retake_pct = new_retake_df.iloc[-1]['재응시비율']
+                retake_trend = last_retake_pct - first_retake_pct
+
+                max_retake_round = new_retake_df.loc[new_retake_df['재응시비율'].idxmax()]
+                total_retakers = new_retake_df['재응시자'].sum()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "최근 회차 재응시자 비율",
+                        f"{last_retake_pct:.1f}%",
+                        delta=f"{retake_trend:+.1f}%p (vs 2회차)"
+                    )
+                with col2:
+                    st.metric(
+                        "재응시자 가장 많은 회차",
+                        f"{int(max_retake_round['회차'])}회차",
+                        delta=f"{int(max_retake_round['재응시자'])}명"
+                    )
+                with col3:
+                    st.metric(
+                        "누적 재응시 건수",
+                        f"{total_retakers}건"
+                    )
+
+                if retake_trend > 5:
+                    st.success(f"🔥 재응시자 비율이 {first_retake_pct:.1f}% → {last_retake_pct:.1f}%로 증가! **도전 문화가 활발히 형성**되고 있습니다.")
+                elif retake_trend > 0:
+                    st.info(f"📈 재응시자 비율이 소폭 증가({retake_trend:+.1f}%p)하고 있습니다. 재도전 동기가 형성되고 있는 긍정적 신호입니다.")
+                elif retake_trend == 0:
+                    st.info("ℹ️ 재응시자 비율이 안정적으로 유지되고 있습니다.")
+                else:
+                    st.warning(f"⚠️ 재응시자 비율이 감소({retake_trend:+.1f}%p)하고 있습니다. 재도전 독려 방안이 필요할 수 있습니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 신규/재응시자 상세**")
+            display_nr = new_retake_df.copy()
+            display_nr['신규비율'] = display_nr['신규비율'].round(1).astype(str) + '%'
+            display_nr['재응시비율'] = display_nr['재응시비율'].round(1).astype(str) + '%'
+            display_nr.columns = ['회차', '신규 응시자(명)', '재응시자(명)', '전체(명)', '신규 비율', '재응시 비율']
+            st.dataframe(display_nr, use_container_width=True, hide_index=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
