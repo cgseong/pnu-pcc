@@ -337,6 +337,52 @@ def main():
             round_stats['불합격자수'] = round_stats['총_응시자수'] - round_stats['합격자수']
             round_stats['합격률'] = (round_stats['합격자수'] / round_stats['총_응시자수'] * 100).round(1)
 
+            # 직전 회차 대비 변화 카드
+            st.subheader("📌 직전 회차 대비 변화")
+            round_stats_sorted = round_stats.sort_values('회차')
+
+            if len(round_stats_sorted) >= 2:
+                latest = round_stats_sorted.iloc[-1]
+                previous = round_stats_sorted.iloc[-2]
+
+                delta_applicants = int(latest['총_응시자수'] - previous['총_응시자수'])
+                delta_pass_rate = latest['합격률'] - previous['합격률']
+                delta_avg_score = latest['평균점수'] - previous['평균점수']
+                delta_passed = int(latest['합격자수'] - previous['합격자수'])
+
+                st.caption(f"**{int(previous['회차'])}회차 → {int(latest['회차'])}회차** 변화")
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 응시자수",
+                        value=f"{int(latest['총_응시자수'])}명",
+                        delta=f"{delta_applicants:+d}명"
+                    )
+                with col2:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 합격률",
+                        value=f"{latest['합격률']:.1f}%",
+                        delta=f"{delta_pass_rate:+.1f}%p"
+                    )
+                with col3:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 평균점수",
+                        value=f"{latest['평균점수']:.1f}점",
+                        delta=f"{delta_avg_score:+.1f}점"
+                    )
+                with col4:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 합격자수",
+                        value=f"{int(latest['합격자수'])}명",
+                        delta=f"{delta_passed:+d}명"
+                    )
+
+                st.markdown("---")
+            else:
+                st.info("비교할 수 있는 직전 회차 데이터가 없습니다.")
+
             # Lv.별 인원수 통계 계산
             level_stats = cse_df.groupby(['회차', '등급(Lv.)']).size().reset_index(name='인원수')
             level_pivot = level_stats.pivot(index='회차', columns='등급(Lv.)', values='인원수').fillna(0)
@@ -472,6 +518,307 @@ def main():
             - 📊 **점수 편차가 가장 큰 회차**: {most_spread}회차 (IQR: {box_stats.loc[most_spread, 'IQR']}점) — 학생 간 실력 차이가 가장 큼
             """)
 
+            # 회차별 학년 구성 비율 (Stacked Bar)
+            st.subheader("🎓 회차별 학년 구성 비율")
+            st.caption("각 회차에 1~4학년이 어떤 비율로 참여했는지 확인하여 저학년 참여도 증가 트렌드 및 홍보 효과를 파악할 수 있습니다.")
+
+            # 회차-학년별 인원수 집계
+            grade_composition = cse_df.groupby(['회차', '학년']).size().reset_index(name='인원수')
+            grade_composition_pivot = grade_composition.pivot(index='회차', columns='학년', values='인원수').fillna(0)
+
+            # 비율 계산
+            grade_composition_pct = grade_composition_pivot.div(grade_composition_pivot.sum(axis=1), axis=0) * 100
+
+            # Stacked Bar (비율)
+            fig_stacked = go.Figure()
+
+            grade_colors = {'1': '#FF6B6B', '2': '#FFA94D', '3': '#51CF66', '4': '#339AF0'}
+
+            for grade in sorted(grade_composition_pct.columns):
+                fig_stacked.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in grade_composition_pct.index],
+                    y=grade_composition_pct[grade],
+                    name=f'{grade}학년',
+                    marker_color=grade_colors.get(str(grade), '#868E96'),
+                    text=[f'{v:.1f}%' for v in grade_composition_pct[grade]],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+            fig_stacked.update_layout(
+                title_text="회차별 학년 구성 비율 (%)",
+                xaxis_title="회차",
+                yaxis_title="비율 (%)",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                yaxis=dict(range=[0, 100]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_stacked, use_container_width=True)
+
+            # Stacked Bar (실제 인원수)
+            fig_stacked_count = go.Figure()
+
+            for grade in sorted(grade_composition_pivot.columns):
+                fig_stacked_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in grade_composition_pivot.index],
+                    y=grade_composition_pivot[grade],
+                    name=f'{grade}학년',
+                    marker_color=grade_colors.get(str(grade), '#868E96'),
+                    text=[f'{int(v)}명' for v in grade_composition_pivot[grade]],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+            fig_stacked_count.update_layout(
+                title_text="회차별 학년 구성 (인원수)",
+                xaxis_title="회차",
+                yaxis_title="인원수",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_stacked_count, use_container_width=True)
+
+            # 저학년(1~2학년) 참여도 추이 분석
+            st.markdown("**📈 저학년(1~2학년) 참여도 추이**")
+
+            lower_grades = [col for col in grade_composition_pivot.columns if str(col) in ['1', '2']]
+            if lower_grades:
+                lower_grade_count = grade_composition_pivot[lower_grades].sum(axis=1)
+                total_count = grade_composition_pivot.sum(axis=1)
+                lower_grade_pct = (lower_grade_count / total_count * 100).round(1)
+
+                fig_lower = go.Figure()
+
+                fig_lower.add_trace(go.Scatter(
+                    x=[f'{int(r)}회차' for r in lower_grade_pct.index],
+                    y=lower_grade_pct.values,
+                    mode='lines+markers+text',
+                    name='저학년 비율',
+                    line=dict(color='#FF6B6B', width=3),
+                    marker=dict(size=10),
+                    text=[f'{v:.1f}%' for v in lower_grade_pct.values],
+                    textposition='top center'
+                ))
+
+                fig_lower.update_layout(
+                    title_text="저학년(1~2학년) 참여 비율 추이",
+                    xaxis_title="회차",
+                    yaxis_title="저학년 비율 (%)",
+                    height=350,
+                    showlegend=False,
+                    yaxis=dict(range=[0, max(lower_grade_pct.values) * 1.3])
+                )
+
+                st.plotly_chart(fig_lower, use_container_width=True)
+
+                # 저학년 참여도 인사이트
+                first_round_pct = lower_grade_pct.iloc[0]
+                last_round_pct = lower_grade_pct.iloc[-1]
+                pct_change = last_round_pct - first_round_pct
+
+                if pct_change > 0:
+                    st.success(f"✅ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 증가**했습니다. 홍보 효과가 나타나고 있습니다!")
+                elif pct_change < 0:
+                    st.warning(f"⚠️ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 감소**했습니다. 저학년 대상 홍보 강화가 필요합니다.")
+                else:
+                    st.info(f"ℹ️ 저학년 참여 비율이 {last_round_pct:.1f}%로 유지되고 있습니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 학년 구성 상세**")
+            display_composition = grade_composition_pivot.copy()
+            display_composition['합계'] = display_composition.sum(axis=1)
+            for col in grade_composition_pivot.columns:
+                display_composition[f'{col}학년(%)'] = (grade_composition_pct[col]).round(1).astype(str) + '%'
+            st.dataframe(display_composition, use_container_width=True)
+
+            # 회차별 신규 응시자 vs 재응시자 비율
+            st.subheader("🔄 회차별 신규 응시자 vs 재응시자 비율")
+            st.caption("처음 시험을 보는 학생과 재도전 학생의 비율 변화를 통해 '도전 문화' 형성 여부와 재시도 동기를 파악할 수 있습니다.")
+
+            # 회차별 신규/재응시자 분류
+            sorted_rounds = sorted(cse_df['회차'].unique())
+            new_vs_retake_data = []
+
+            # 각 회차별로 해당 회차 이전에 응시한 적 있는지 판별
+            for round_num in sorted_rounds:
+                current_round_students = cse_df[cse_df['회차'] == round_num][['이름', '학번']].drop_duplicates()
+                previous_rounds_students = cse_df[cse_df['회차'] < round_num][['이름', '학번']].drop_duplicates()
+
+                if previous_rounds_students.empty:
+                    # 첫 회차는 모두 신규
+                    new_count = len(current_round_students)
+                    retake_count = 0
+                else:
+                    # 이전 회차에 응시한 적 있는 학생 = 재응시자
+                    merged = current_round_students.merge(
+                        previous_rounds_students, on=['이름', '학번'], how='left', indicator=True
+                    )
+                    retake_count = len(merged[merged['_merge'] == 'both'])
+                    new_count = len(merged[merged['_merge'] == 'left_only'])
+
+                total = new_count + retake_count
+                new_vs_retake_data.append({
+                    '회차': round_num,
+                    '신규응시자': new_count,
+                    '재응시자': retake_count,
+                    '전체': total,
+                    '신규비율': (new_count / total * 100) if total > 0 else 0,
+                    '재응시비율': (retake_count / total * 100) if total > 0 else 0
+                })
+
+            new_retake_df = pd.DataFrame(new_vs_retake_data)
+
+            # Stacked Bar (비율)
+            col1, col2 = st.columns(2)
+
+            with col1:
+                fig_nr_pct = go.Figure()
+
+                fig_nr_pct.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['신규비율'],
+                    name='신규 응시자',
+                    marker_color='#4ECDC4',
+                    text=[f'{v:.1f}%' for v in new_retake_df['신규비율']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_pct.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['재응시비율'],
+                    name='재응시자',
+                    marker_color='#FF6B6B',
+                    text=[f'{v:.1f}%' for v in new_retake_df['재응시비율']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_pct.update_layout(
+                    title_text="회차별 신규/재응시자 비율 (%)",
+                    xaxis_title="회차",
+                    yaxis_title="비율 (%)",
+                    barmode='stack',
+                    height=400,
+                    showlegend=True,
+                    yaxis=dict(range=[0, 100]),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+
+                st.plotly_chart(fig_nr_pct, use_container_width=True)
+
+            with col2:
+                # Stacked Bar (인원수)
+                fig_nr_count = go.Figure()
+
+                fig_nr_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['신규응시자'],
+                    name='신규 응시자',
+                    marker_color='#4ECDC4',
+                    text=[f'{int(v)}명' for v in new_retake_df['신규응시자']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                    y=new_retake_df['재응시자'],
+                    name='재응시자',
+                    marker_color='#FF6B6B',
+                    text=[f'{int(v)}명' for v in new_retake_df['재응시자']],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+                fig_nr_count.update_layout(
+                    title_text="회차별 신규/재응시자 인원수",
+                    xaxis_title="회차",
+                    yaxis_title="인원수",
+                    barmode='stack',
+                    height=400,
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+
+                st.plotly_chart(fig_nr_count, use_container_width=True)
+
+            # 재응시자 비율 추이 라인차트
+            fig_retake_trend = go.Figure()
+
+            fig_retake_trend.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in new_retake_df['회차']],
+                y=new_retake_df['재응시비율'],
+                mode='lines+markers+text',
+                name='재응시자 비율',
+                line=dict(color='#FF6B6B', width=3),
+                marker=dict(size=10),
+                text=[f'{v:.1f}%' for v in new_retake_df['재응시비율']],
+                textposition='top center'
+            ))
+
+            fig_retake_trend.update_layout(
+                title_text="재응시자 비율 추이 — 도전 문화 형성 지표",
+                xaxis_title="회차",
+                yaxis_title="재응시자 비율 (%)",
+                height=350,
+                showlegend=False,
+                yaxis=dict(range=[0, max(new_retake_df['재응시비율'].max() * 1.3, 10)])
+            )
+
+            st.plotly_chart(fig_retake_trend, use_container_width=True)
+
+            # 도전 문화 인사이트
+            if len(new_retake_df) >= 2:
+                first_retake_pct = new_retake_df.iloc[1]['재응시비율']  # 2회차부터 의미있음
+                last_retake_pct = new_retake_df.iloc[-1]['재응시비율']
+                retake_trend = last_retake_pct - first_retake_pct
+
+                max_retake_round = new_retake_df.loc[new_retake_df['재응시비율'].idxmax()]
+                total_retakers = new_retake_df['재응시자'].sum()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "최근 회차 재응시자 비율",
+                        f"{last_retake_pct:.1f}%",
+                        delta=f"{retake_trend:+.1f}%p (vs 2회차)"
+                    )
+                with col2:
+                    st.metric(
+                        "재응시자 가장 많은 회차",
+                        f"{int(max_retake_round['회차'])}회차",
+                        delta=f"{int(max_retake_round['재응시자'])}명"
+                    )
+                with col3:
+                    st.metric(
+                        "누적 재응시 건수",
+                        f"{total_retakers}건"
+                    )
+
+                if retake_trend > 5:
+                    st.success(f"🔥 재응시자 비율이 {first_retake_pct:.1f}% → {last_retake_pct:.1f}%로 증가! **도전 문화가 활발히 형성**되고 있습니다.")
+                elif retake_trend > 0:
+                    st.info(f"📈 재응시자 비율이 소폭 증가({retake_trend:+.1f}%p)하고 있습니다. 재도전 동기가 형성되고 있는 긍정적 신호입니다.")
+                elif retake_trend == 0:
+                    st.info("ℹ️ 재응시자 비율이 안정적으로 유지되고 있습니다.")
+                else:
+                    st.warning(f"⚠️ 재응시자 비율이 감소({retake_trend:+.1f}%p)하고 있습니다. 재도전 독려 방안이 필요할 수 있습니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 신규/재응시자 상세**")
+            display_nr = new_retake_df.copy()
+            display_nr['신규비율'] = display_nr['신규비율'].round(1).astype(str) + '%'
+            display_nr['재응시비율'] = display_nr['재응시비율'].round(1).astype(str) + '%'
+            display_nr.columns = ['회차', '신규 응시자(명)', '재응시자(명)', '전체(명)', '신규 비율', '재응시 비율']
+            st.dataframe(display_nr, use_container_width=True, hide_index=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
@@ -485,10 +832,7 @@ def main():
         if cse_df.empty:
             st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
         else:
-            # 회차별 학년별 통계
-            st.subheader("📊 회차별 학년별 통계")
-
-            # 회차별 학년별 응시자수 및 합격률
+            # 회차별 학년별 통계 계산
             grade_round_stats = cse_df.groupby(['회차', '학년']).agg({
                 '이름': 'count',
                 '합격여부_binary': ['sum', 'mean'],
@@ -497,41 +841,171 @@ def main():
 
             grade_round_stats.columns = ['회차', '학년', '응시자수', '합격자수', '합격률', '평균점수']
             grade_round_stats['합격률'] = (grade_round_stats['합격률'] * 100).round(1)
+            grade_round_stats['평균점수'] = grade_round_stats['평균점수'].round(1)
 
-            # 회차별 학년별 응시자수 그래프
-            fig1 = go.Figure()
+            grade_colors = {'1': '#FF6B6B', '2': '#FFA94D', '3': '#51CF66', '4': '#339AF0'}
+
+            # ===== 1. 응시자수 + 합격자수 (Grouped Bar) =====
+            st.subheader("📊 회차별 학년별 응시자수 & 합격자수")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                fig_applicants = go.Figure()
+                for grade in sorted(grade_round_stats['학년'].unique()):
+                    grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                    fig_applicants.add_trace(go.Bar(
+                        x=grade_data['회차'],
+                        y=grade_data['응시자수'],
+                        name=f'{grade}학년',
+                        marker_color=grade_colors.get(str(grade), '#868E96'),
+                        text=grade_data['응시자수'].astype(int),
+                        textposition='outside'
+                    ))
+
+                fig_applicants.update_layout(
+                    title_text="회차별 학년별 응시자수",
+                    xaxis_title="회차",
+                    yaxis_title="응시자수 (명)",
+                    barmode='group',
+                    height=400,
+                    showlegend=True,
+                    xaxis=dict(dtick=1),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                st.plotly_chart(fig_applicants, use_container_width=True)
+
+            with col2:
+                fig_passed = go.Figure()
+                for grade in sorted(grade_round_stats['학년'].unique()):
+                    grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                    fig_passed.add_trace(go.Bar(
+                        x=grade_data['회차'],
+                        y=grade_data['합격자수'],
+                        name=f'{grade}학년',
+                        marker_color=grade_colors.get(str(grade), '#868E96'),
+                        text=grade_data['합격자수'].astype(int),
+                        textposition='outside'
+                    ))
+
+                fig_passed.update_layout(
+                    title_text="회차별 학년별 합격자수",
+                    xaxis_title="회차",
+                    yaxis_title="합격자수 (명)",
+                    barmode='group',
+                    height=400,
+                    showlegend=True,
+                    xaxis=dict(dtick=1),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                st.plotly_chart(fig_passed, use_container_width=True)
+
+            # ===== 2. 합격률 추이 (라인차트) =====
+            st.subheader("📈 회차별 학년별 합격률 추이")
+
+            fig_pass_rate = go.Figure()
             for grade in sorted(grade_round_stats['학년'].unique()):
                 grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
-                fig1.add_trace(go.Bar(
+                fig_pass_rate.add_trace(go.Scatter(
                     x=grade_data['회차'],
-                    y=grade_data['응시자수'],
+                    y=grade_data['합격률'],
+                    mode='lines+markers+text',
                     name=f'{grade}학년',
-                    text=grade_data['응시자수'],
-                    textposition='auto'
+                    line=dict(color=grade_colors.get(str(grade), '#868E96'), width=3),
+                    marker=dict(size=9),
+                    text=[f'{v:.1f}%' for v in grade_data['합격률']],
+                    textposition='top center'
                 ))
 
-            fig1.update_layout(
-                title_text="회차별 학년별 응시자수",
+            fig_pass_rate.update_layout(
+                title_text="학년별 합격률 추이",
                 xaxis_title="회차",
-                yaxis_title="응시자수",
-                barmode='group',
+                yaxis_title="합격률 (%)",
+                height=420,
                 showlegend=True,
-                xaxis=dict(dtick=1)
+                xaxis=dict(dtick=1),
+                yaxis=dict(range=[0, 105]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
             )
-            st.plotly_chart(fig1, use_container_width=True)
 
-            # 회차별 학년별 상세 통계 테이블
-            st.subheader("📋 회차별 학년별 상세 통계")
-            display_stats = grade_round_stats.copy()
-            display_stats['합격률'] = display_stats['합격률'].astype(str) + '%'
-            display_stats['평균점수'] = display_stats['평균점수'].round(1)
-            display_stats = display_stats.sort_values(['회차', '학년'], ascending=[False, False])
-            st.dataframe(display_stats, use_container_width=True, hide_index=True)
+            # 전체 평균 합격률 참고선
+            overall_pass_rate = (cse_df['합격여부_binary'].mean() * 100)
+            fig_pass_rate.add_hline(
+                y=overall_pass_rate, line_dash="dot", line_color="gray",
+                annotation_text=f"전체 평균 {overall_pass_rate:.1f}%",
+                annotation_position="bottom right"
+            )
 
-            # 학년별 통계
+            st.plotly_chart(fig_pass_rate, use_container_width=True)
+
+            # ===== 3. 평균점수 추이 (라인차트) =====
+            st.subheader("📈 회차별 학년별 평균점수 추이")
+
+            fig_avg_score = go.Figure()
+            for grade in sorted(grade_round_stats['학년'].unique()):
+                grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                fig_avg_score.add_trace(go.Scatter(
+                    x=grade_data['회차'],
+                    y=grade_data['평균점수'],
+                    mode='lines+markers+text',
+                    name=f'{grade}학년',
+                    line=dict(color=grade_colors.get(str(grade), '#868E96'), width=3),
+                    marker=dict(size=9),
+                    text=[f'{v:.0f}' for v in grade_data['평균점수']],
+                    textposition='top center'
+                ))
+
+            fig_avg_score.update_layout(
+                title_text="학년별 평균점수 추이",
+                xaxis_title="회차",
+                yaxis_title="평균점수",
+                height=420,
+                showlegend=True,
+                xaxis=dict(dtick=1),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            # 합격선 표시
+            fig_avg_score.add_hline(
+                y=400, line_dash="dash", line_color="red",
+                annotation_text="합격선 (400점)",
+                annotation_position="bottom right"
+            )
+
+            st.plotly_chart(fig_avg_score, use_container_width=True)
+
+            # ===== 4. 히트맵 (합격률) =====
+            st.subheader("🗺️ 합격률 히트맵 (회차 × 학년)")
+            st.caption("색상이 진할수록 합격률이 높습니다. 어느 학년이 어느 시점에 성과가 좋았는지 한눈에 파악할 수 있습니다.")
+
+            heatmap_data = grade_round_stats.pivot(index='회차', columns='학년', values='합격률').fillna(0)
+
+            fig_heatmap = go.Figure(data=go.Heatmap(
+                z=heatmap_data.values,
+                x=[f'{g}학년' for g in heatmap_data.columns],
+                y=[f'{int(r)}회차' for r in heatmap_data.index],
+                colorscale='RdYlGn',
+                zmin=0,
+                zmax=100,
+                text=[[f'{v:.1f}%' for v in row] for row in heatmap_data.values],
+                texttemplate='%{text}',
+                textfont=dict(size=14),
+                colorbar=dict(title='합격률(%)')
+            ))
+
+            fig_heatmap.update_layout(
+                title_text="회차 × 학년 합격률 히트맵",
+                xaxis_title="학년",
+                yaxis_title="회차",
+                height=350,
+                yaxis=dict(autorange='reversed')
+            )
+
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+            # ===== 5. 학년별 종합 통계 =====
             st.subheader("🎓 학년별 종합 통계")
 
-            # 학년별 통계
             grade_stats = cse_df.groupby('학년').agg({
                 '이름': 'count',
                 '합격여부_binary': ['sum', 'mean'],
@@ -543,18 +1017,17 @@ def main():
             col1, col2 = st.columns(2)
 
             with col1:
-                # 학년별 응시자수 및 합격률
-                fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_summary = make_subplots(specs=[[{"secondary_y": True}]])
 
-                fig1.add_trace(
+                fig_summary.add_trace(
                     go.Bar(x=grade_stats.index, y=grade_stats['응시자수'],
                           name='응시자수', marker_color='lightblue',
-                          text=grade_stats['응시자수'],
+                          text=grade_stats['응시자수'].astype(int),
                           textposition='inside'),
                     secondary_y=False,
                 )
 
-                fig1.add_trace(
+                fig_summary.add_trace(
                     go.Scatter(x=grade_stats.index, y=grade_stats['합격률_pct'],
                               mode='lines+markers+text', name='합격률(%)',
                               line=dict(color='red', width=3),
@@ -563,38 +1036,46 @@ def main():
                     secondary_y=True,
                 )
 
-                fig1.update_xaxes(title_text="학년")
-                fig1.update_yaxes(title_text="응시자수", secondary_y=False)
-                fig1.update_yaxes(title_text="합격률(%)", secondary_y=True)
-                fig1.update_layout(
+                fig_summary.update_xaxes(title_text="학년")
+                fig_summary.update_yaxes(title_text="응시자수", secondary_y=False)
+                fig_summary.update_yaxes(title_text="합격률(%)", secondary_y=True)
+                fig_summary.update_layout(
                     title_text="학년별 응시자수 및 합격률",
-                    showlegend=True
+                    showlegend=True,
+                    height=400
                 )
 
-                st.plotly_chart(fig1, use_container_width=True)
+                st.plotly_chart(fig_summary, use_container_width=True)
 
             with col2:
-                # 학년별 평균점수
-                fig2 = px.bar(x=grade_stats.index, y=grade_stats['평균점수'],
+                fig_score = px.bar(x=grade_stats.index, y=grade_stats['평균점수'],
                              title="학년별 평균점수",
                              labels={'x': '학년', 'y': '평균점수'})
-                fig2.update_traces(
+                fig_score.update_traces(
                     marker_color='lightgreen',
                     text=grade_stats['평균점수'].round(1),
                     textposition='inside'
                 )
-                fig2.update_layout(
+                fig_score.update_layout(
                     showlegend=False,
-                    yaxis_title="평균점수"
+                    yaxis_title="평균점수",
+                    height=400
                 )
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig_score, use_container_width=True)
 
-            # 상세 통계 테이블
-            st.subheader("📋 학년별 상세 통계")
-            display_stats = grade_stats.copy()
-            display_stats['합격률'] = display_stats['합격률_pct'].astype(str) + '%'
-            display_stats = display_stats.drop('합격률_pct', axis=1)
-            st.dataframe(display_stats, use_container_width=True)
+            # ===== 6. 상세 데이터 테이블 =====
+            st.subheader("📋 회차별 학년별 상세 통계")
+            display_stats = grade_round_stats.copy()
+            display_stats['합격률'] = display_stats['합격률'].astype(str) + '%'
+            display_stats = display_stats.sort_values(['회차', '학년'], ascending=[False, True])
+            st.dataframe(display_stats, use_container_width=True, hide_index=True)
+
+            # 학년별 종합 테이블
+            st.subheader("📋 학년별 종합 상세 통계")
+            display_grade_stats = grade_stats.copy()
+            display_grade_stats['합격률'] = display_grade_stats['합격률_pct'].astype(str) + '%'
+            display_grade_stats = display_grade_stats.drop('합격률_pct', axis=1)
+            st.dataframe(display_grade_stats, use_container_width=True)
 
     # 탭 4: PCCP 레벨 정보
     with tab4:
