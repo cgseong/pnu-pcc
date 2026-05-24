@@ -832,10 +832,7 @@ def main():
         if cse_df.empty:
             st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
         else:
-            # 회차별 학년별 통계
-            st.subheader("📊 회차별 학년별 통계")
-
-            # 회차별 학년별 응시자수 및 합격률
+            # 회차별 학년별 통계 계산
             grade_round_stats = cse_df.groupby(['회차', '학년']).agg({
                 '이름': 'count',
                 '합격여부_binary': ['sum', 'mean'],
@@ -844,41 +841,171 @@ def main():
 
             grade_round_stats.columns = ['회차', '학년', '응시자수', '합격자수', '합격률', '평균점수']
             grade_round_stats['합격률'] = (grade_round_stats['합격률'] * 100).round(1)
+            grade_round_stats['평균점수'] = grade_round_stats['평균점수'].round(1)
 
-            # 회차별 학년별 응시자수 그래프
-            fig1 = go.Figure()
+            grade_colors = {'1': '#FF6B6B', '2': '#FFA94D', '3': '#51CF66', '4': '#339AF0'}
+
+            # ===== 1. 응시자수 + 합격자수 (Grouped Bar) =====
+            st.subheader("📊 회차별 학년별 응시자수 & 합격자수")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                fig_applicants = go.Figure()
+                for grade in sorted(grade_round_stats['학년'].unique()):
+                    grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                    fig_applicants.add_trace(go.Bar(
+                        x=grade_data['회차'],
+                        y=grade_data['응시자수'],
+                        name=f'{grade}학년',
+                        marker_color=grade_colors.get(str(grade), '#868E96'),
+                        text=grade_data['응시자수'].astype(int),
+                        textposition='outside'
+                    ))
+
+                fig_applicants.update_layout(
+                    title_text="회차별 학년별 응시자수",
+                    xaxis_title="회차",
+                    yaxis_title="응시자수 (명)",
+                    barmode='group',
+                    height=400,
+                    showlegend=True,
+                    xaxis=dict(dtick=1),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                st.plotly_chart(fig_applicants, use_container_width=True)
+
+            with col2:
+                fig_passed = go.Figure()
+                for grade in sorted(grade_round_stats['학년'].unique()):
+                    grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                    fig_passed.add_trace(go.Bar(
+                        x=grade_data['회차'],
+                        y=grade_data['합격자수'],
+                        name=f'{grade}학년',
+                        marker_color=grade_colors.get(str(grade), '#868E96'),
+                        text=grade_data['합격자수'].astype(int),
+                        textposition='outside'
+                    ))
+
+                fig_passed.update_layout(
+                    title_text="회차별 학년별 합격자수",
+                    xaxis_title="회차",
+                    yaxis_title="합격자수 (명)",
+                    barmode='group',
+                    height=400,
+                    showlegend=True,
+                    xaxis=dict(dtick=1),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                st.plotly_chart(fig_passed, use_container_width=True)
+
+            # ===== 2. 합격률 추이 (라인차트) =====
+            st.subheader("📈 회차별 학년별 합격률 추이")
+
+            fig_pass_rate = go.Figure()
             for grade in sorted(grade_round_stats['학년'].unique()):
                 grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
-                fig1.add_trace(go.Bar(
+                fig_pass_rate.add_trace(go.Scatter(
                     x=grade_data['회차'],
-                    y=grade_data['응시자수'],
+                    y=grade_data['합격률'],
+                    mode='lines+markers+text',
                     name=f'{grade}학년',
-                    text=grade_data['응시자수'],
-                    textposition='auto'
+                    line=dict(color=grade_colors.get(str(grade), '#868E96'), width=3),
+                    marker=dict(size=9),
+                    text=[f'{v:.1f}%' for v in grade_data['합격률']],
+                    textposition='top center'
                 ))
 
-            fig1.update_layout(
-                title_text="회차별 학년별 응시자수",
+            fig_pass_rate.update_layout(
+                title_text="학년별 합격률 추이",
                 xaxis_title="회차",
-                yaxis_title="응시자수",
-                barmode='group',
+                yaxis_title="합격률 (%)",
+                height=420,
                 showlegend=True,
-                xaxis=dict(dtick=1)
+                xaxis=dict(dtick=1),
+                yaxis=dict(range=[0, 105]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
             )
-            st.plotly_chart(fig1, use_container_width=True)
 
-            # 회차별 학년별 상세 통계 테이블
-            st.subheader("📋 회차별 학년별 상세 통계")
-            display_stats = grade_round_stats.copy()
-            display_stats['합격률'] = display_stats['합격률'].astype(str) + '%'
-            display_stats['평균점수'] = display_stats['평균점수'].round(1)
-            display_stats = display_stats.sort_values(['회차', '학년'], ascending=[False, False])
-            st.dataframe(display_stats, use_container_width=True, hide_index=True)
+            # 전체 평균 합격률 참고선
+            overall_pass_rate = (cse_df['합격여부_binary'].mean() * 100)
+            fig_pass_rate.add_hline(
+                y=overall_pass_rate, line_dash="dot", line_color="gray",
+                annotation_text=f"전체 평균 {overall_pass_rate:.1f}%",
+                annotation_position="bottom right"
+            )
 
-            # 학년별 통계
+            st.plotly_chart(fig_pass_rate, use_container_width=True)
+
+            # ===== 3. 평균점수 추이 (라인차트) =====
+            st.subheader("📈 회차별 학년별 평균점수 추이")
+
+            fig_avg_score = go.Figure()
+            for grade in sorted(grade_round_stats['학년'].unique()):
+                grade_data = grade_round_stats[grade_round_stats['학년'] == grade]
+                fig_avg_score.add_trace(go.Scatter(
+                    x=grade_data['회차'],
+                    y=grade_data['평균점수'],
+                    mode='lines+markers+text',
+                    name=f'{grade}학년',
+                    line=dict(color=grade_colors.get(str(grade), '#868E96'), width=3),
+                    marker=dict(size=9),
+                    text=[f'{v:.0f}' for v in grade_data['평균점수']],
+                    textposition='top center'
+                ))
+
+            fig_avg_score.update_layout(
+                title_text="학년별 평균점수 추이",
+                xaxis_title="회차",
+                yaxis_title="평균점수",
+                height=420,
+                showlegend=True,
+                xaxis=dict(dtick=1),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            # 합격선 표시
+            fig_avg_score.add_hline(
+                y=400, line_dash="dash", line_color="red",
+                annotation_text="합격선 (400점)",
+                annotation_position="bottom right"
+            )
+
+            st.plotly_chart(fig_avg_score, use_container_width=True)
+
+            # ===== 4. 히트맵 (합격률) =====
+            st.subheader("🗺️ 합격률 히트맵 (회차 × 학년)")
+            st.caption("색상이 진할수록 합격률이 높습니다. 어느 학년이 어느 시점에 성과가 좋았는지 한눈에 파악할 수 있습니다.")
+
+            heatmap_data = grade_round_stats.pivot(index='회차', columns='학년', values='합격률').fillna(0)
+
+            fig_heatmap = go.Figure(data=go.Heatmap(
+                z=heatmap_data.values,
+                x=[f'{g}학년' for g in heatmap_data.columns],
+                y=[f'{int(r)}회차' for r in heatmap_data.index],
+                colorscale='RdYlGn',
+                zmin=0,
+                zmax=100,
+                text=[[f'{v:.1f}%' for v in row] for row in heatmap_data.values],
+                texttemplate='%{text}',
+                textfont=dict(size=14),
+                colorbar=dict(title='합격률(%)')
+            ))
+
+            fig_heatmap.update_layout(
+                title_text="회차 × 학년 합격률 히트맵",
+                xaxis_title="학년",
+                yaxis_title="회차",
+                height=350,
+                yaxis=dict(autorange='reversed')
+            )
+
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+            # ===== 5. 학년별 종합 통계 =====
             st.subheader("🎓 학년별 종합 통계")
 
-            # 학년별 통계
             grade_stats = cse_df.groupby('학년').agg({
                 '이름': 'count',
                 '합격여부_binary': ['sum', 'mean'],
@@ -890,18 +1017,17 @@ def main():
             col1, col2 = st.columns(2)
 
             with col1:
-                # 학년별 응시자수 및 합격률
-                fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+                fig_summary = make_subplots(specs=[[{"secondary_y": True}]])
 
-                fig1.add_trace(
+                fig_summary.add_trace(
                     go.Bar(x=grade_stats.index, y=grade_stats['응시자수'],
                           name='응시자수', marker_color='lightblue',
-                          text=grade_stats['응시자수'],
+                          text=grade_stats['응시자수'].astype(int),
                           textposition='inside'),
                     secondary_y=False,
                 )
 
-                fig1.add_trace(
+                fig_summary.add_trace(
                     go.Scatter(x=grade_stats.index, y=grade_stats['합격률_pct'],
                               mode='lines+markers+text', name='합격률(%)',
                               line=dict(color='red', width=3),
@@ -910,38 +1036,46 @@ def main():
                     secondary_y=True,
                 )
 
-                fig1.update_xaxes(title_text="학년")
-                fig1.update_yaxes(title_text="응시자수", secondary_y=False)
-                fig1.update_yaxes(title_text="합격률(%)", secondary_y=True)
-                fig1.update_layout(
+                fig_summary.update_xaxes(title_text="학년")
+                fig_summary.update_yaxes(title_text="응시자수", secondary_y=False)
+                fig_summary.update_yaxes(title_text="합격률(%)", secondary_y=True)
+                fig_summary.update_layout(
                     title_text="학년별 응시자수 및 합격률",
-                    showlegend=True
+                    showlegend=True,
+                    height=400
                 )
 
-                st.plotly_chart(fig1, use_container_width=True)
+                st.plotly_chart(fig_summary, use_container_width=True)
 
             with col2:
-                # 학년별 평균점수
-                fig2 = px.bar(x=grade_stats.index, y=grade_stats['평균점수'],
+                fig_score = px.bar(x=grade_stats.index, y=grade_stats['평균점수'],
                              title="학년별 평균점수",
                              labels={'x': '학년', 'y': '평균점수'})
-                fig2.update_traces(
+                fig_score.update_traces(
                     marker_color='lightgreen',
                     text=grade_stats['평균점수'].round(1),
                     textposition='inside'
                 )
-                fig2.update_layout(
+                fig_score.update_layout(
                     showlegend=False,
-                    yaxis_title="평균점수"
+                    yaxis_title="평균점수",
+                    height=400
                 )
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig_score, use_container_width=True)
 
-            # 상세 통계 테이블
-            st.subheader("📋 학년별 상세 통계")
-            display_stats = grade_stats.copy()
-            display_stats['합격률'] = display_stats['합격률_pct'].astype(str) + '%'
-            display_stats = display_stats.drop('합격률_pct', axis=1)
-            st.dataframe(display_stats, use_container_width=True)
+            # ===== 6. 상세 데이터 테이블 =====
+            st.subheader("📋 회차별 학년별 상세 통계")
+            display_stats = grade_round_stats.copy()
+            display_stats['합격률'] = display_stats['합격률'].astype(str) + '%'
+            display_stats = display_stats.sort_values(['회차', '학년'], ascending=[False, True])
+            st.dataframe(display_stats, use_container_width=True, hide_index=True)
+
+            # 학년별 종합 테이블
+            st.subheader("📋 학년별 종합 상세 통계")
+            display_grade_stats = grade_stats.copy()
+            display_grade_stats['합격률'] = display_grade_stats['합격률_pct'].astype(str) + '%'
+            display_grade_stats = display_grade_stats.drop('합격률_pct', axis=1)
+            st.dataframe(display_grade_stats, use_container_width=True)
 
     # 탭 4: PCCP 레벨 정보
     with tab4:
