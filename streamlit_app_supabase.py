@@ -416,6 +416,62 @@ def main():
             level_pivot_sorted = level_pivot.sort_index(ascending=False)
             st.dataframe(level_pivot_sorted, use_container_width=True)
 
+            # 회차별 점수 분포 Box Plot
+            st.subheader("📦 회차별 점수 분포 (Box Plot)")
+            st.caption("중앙값, 사분위수, 이상치를 통해 각 회차의 난이도와 점수 집중도를 파악할 수 있습니다.")
+
+            fig_box = go.Figure()
+
+            for round_num in sorted(cse_df['회차'].unique()):
+                round_data = cse_df[cse_df['회차'] == round_num]['총점']
+                fig_box.add_trace(go.Box(
+                    y=round_data,
+                    name=f'{round_num}회차',
+                    boxmean='sd',  # 평균과 표준편차도 표시
+                    marker_color=px.colors.qualitative.Set2[int(round_num) % len(px.colors.qualitative.Set2)],
+                    boxpoints='outliers',  # 이상치만 표시
+                    jitter=0.3,
+                    pointpos=-1.8
+                ))
+
+            fig_box.update_layout(
+                title_text="회차별 점수 분포",
+                yaxis_title="총점",
+                xaxis_title="회차",
+                height=500,
+                showlegend=False,
+                yaxis=dict(zeroline=False)
+            )
+
+            # 합격선 표시 (400점)
+            fig_box.add_hline(
+                y=400, line_dash="dash", line_color="red",
+                annotation_text="합격선 (400점)",
+                annotation_position="top left"
+            )
+
+            st.plotly_chart(fig_box, use_container_width=True)
+
+            # 회차별 분포 요약 통계
+            st.markdown("**📋 회차별 분포 요약**")
+            box_stats = cse_df.groupby('회차')['총점'].describe().round(1)
+            box_stats.columns = ['응시자수', '평균', '표준편차', '최솟값', '25%', '중앙값(50%)', '75%', '최댓값']
+            box_stats['IQR'] = box_stats['75%'] - box_stats['25%']
+            box_stats['변동계수(%)'] = ((box_stats['표준편차'] / box_stats['평균']) * 100).round(1)
+            st.dataframe(box_stats, use_container_width=True)
+
+            # 난이도 인사이트 자동 생성
+            hardest_round = box_stats['평균'].idxmin()
+            easiest_round = box_stats['평균'].idxmax()
+            most_spread = box_stats['IQR'].idxmax()
+
+            st.info(f"""
+            💡 **인사이트 요약**
+            - 🔴 **가장 어려웠던 회차**: {hardest_round}회차 (평균 {box_stats.loc[hardest_round, '평균']}점)
+            - 🟢 **가장 쉬웠던 회차**: {easiest_round}회차 (평균 {box_stats.loc[easiest_round, '평균']}점)
+            - 📊 **점수 편차가 가장 큰 회차**: {most_spread}회차 (IQR: {box_stats.loc[most_spread, 'IQR']}점) — 학생 간 실력 차이가 가장 큼
+            """)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
