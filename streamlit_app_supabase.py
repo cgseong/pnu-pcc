@@ -518,6 +518,125 @@ def main():
             - 📊 **점수 편차가 가장 큰 회차**: {most_spread}회차 (IQR: {box_stats.loc[most_spread, 'IQR']}점) — 학생 간 실력 차이가 가장 큼
             """)
 
+            # 회차별 학년 구성 비율 (Stacked Bar)
+            st.subheader("🎓 회차별 학년 구성 비율")
+            st.caption("각 회차에 1~4학년이 어떤 비율로 참여했는지 확인하여 저학년 참여도 증가 트렌드 및 홍보 효과를 파악할 수 있습니다.")
+
+            # 회차-학년별 인원수 집계
+            grade_composition = cse_df.groupby(['회차', '학년']).size().reset_index(name='인원수')
+            grade_composition_pivot = grade_composition.pivot(index='회차', columns='학년', values='인원수').fillna(0)
+
+            # 비율 계산
+            grade_composition_pct = grade_composition_pivot.div(grade_composition_pivot.sum(axis=1), axis=0) * 100
+
+            # Stacked Bar (비율)
+            fig_stacked = go.Figure()
+
+            grade_colors = {'1': '#FF6B6B', '2': '#FFA94D', '3': '#51CF66', '4': '#339AF0'}
+
+            for grade in sorted(grade_composition_pct.columns):
+                fig_stacked.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in grade_composition_pct.index],
+                    y=grade_composition_pct[grade],
+                    name=f'{grade}학년',
+                    marker_color=grade_colors.get(str(grade), '#868E96'),
+                    text=[f'{v:.1f}%' for v in grade_composition_pct[grade]],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+            fig_stacked.update_layout(
+                title_text="회차별 학년 구성 비율 (%)",
+                xaxis_title="회차",
+                yaxis_title="비율 (%)",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                yaxis=dict(range=[0, 100]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_stacked, use_container_width=True)
+
+            # Stacked Bar (실제 인원수)
+            fig_stacked_count = go.Figure()
+
+            for grade in sorted(grade_composition_pivot.columns):
+                fig_stacked_count.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in grade_composition_pivot.index],
+                    y=grade_composition_pivot[grade],
+                    name=f'{grade}학년',
+                    marker_color=grade_colors.get(str(grade), '#868E96'),
+                    text=[f'{int(v)}명' for v in grade_composition_pivot[grade]],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+            fig_stacked_count.update_layout(
+                title_text="회차별 학년 구성 (인원수)",
+                xaxis_title="회차",
+                yaxis_title="인원수",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_stacked_count, use_container_width=True)
+
+            # 저학년(1~2학년) 참여도 추이 분석
+            st.markdown("**📈 저학년(1~2학년) 참여도 추이**")
+
+            lower_grades = [col for col in grade_composition_pivot.columns if str(col) in ['1', '2']]
+            if lower_grades:
+                lower_grade_count = grade_composition_pivot[lower_grades].sum(axis=1)
+                total_count = grade_composition_pivot.sum(axis=1)
+                lower_grade_pct = (lower_grade_count / total_count * 100).round(1)
+
+                fig_lower = go.Figure()
+
+                fig_lower.add_trace(go.Scatter(
+                    x=[f'{int(r)}회차' for r in lower_grade_pct.index],
+                    y=lower_grade_pct.values,
+                    mode='lines+markers+text',
+                    name='저학년 비율',
+                    line=dict(color='#FF6B6B', width=3),
+                    marker=dict(size=10),
+                    text=[f'{v:.1f}%' for v in lower_grade_pct.values],
+                    textposition='top center'
+                ))
+
+                fig_lower.update_layout(
+                    title_text="저학년(1~2학년) 참여 비율 추이",
+                    xaxis_title="회차",
+                    yaxis_title="저학년 비율 (%)",
+                    height=350,
+                    showlegend=False,
+                    yaxis=dict(range=[0, max(lower_grade_pct.values) * 1.3])
+                )
+
+                st.plotly_chart(fig_lower, use_container_width=True)
+
+                # 저학년 참여도 인사이트
+                first_round_pct = lower_grade_pct.iloc[0]
+                last_round_pct = lower_grade_pct.iloc[-1]
+                pct_change = last_round_pct - first_round_pct
+
+                if pct_change > 0:
+                    st.success(f"✅ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 증가**했습니다. 홍보 효과가 나타나고 있습니다!")
+                elif pct_change < 0:
+                    st.warning(f"⚠️ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 감소**했습니다. 저학년 대상 홍보 강화가 필요합니다.")
+                else:
+                    st.info(f"ℹ️ 저학년 참여 비율이 {last_round_pct:.1f}%로 유지되고 있습니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 학년 구성 상세**")
+            display_composition = grade_composition_pivot.copy()
+            display_composition['합계'] = display_composition.sum(axis=1)
+            for col in grade_composition_pivot.columns:
+                display_composition[f'{col}학년(%)'] = (grade_composition_pct[col]).round(1).astype(str) + '%'
+            st.dataframe(display_composition, use_container_width=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
