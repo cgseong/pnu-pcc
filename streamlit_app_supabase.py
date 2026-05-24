@@ -337,6 +337,52 @@ def main():
             round_stats['불합격자수'] = round_stats['총_응시자수'] - round_stats['합격자수']
             round_stats['합격률'] = (round_stats['합격자수'] / round_stats['총_응시자수'] * 100).round(1)
 
+            # 직전 회차 대비 변화 카드
+            st.subheader("📌 직전 회차 대비 변화")
+            round_stats_sorted = round_stats.sort_values('회차')
+
+            if len(round_stats_sorted) >= 2:
+                latest = round_stats_sorted.iloc[-1]
+                previous = round_stats_sorted.iloc[-2]
+
+                delta_applicants = int(latest['총_응시자수'] - previous['총_응시자수'])
+                delta_pass_rate = latest['합격률'] - previous['합격률']
+                delta_avg_score = latest['평균점수'] - previous['평균점수']
+                delta_passed = int(latest['합격자수'] - previous['합격자수'])
+
+                st.caption(f"**{int(previous['회차'])}회차 → {int(latest['회차'])}회차** 변화")
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 응시자수",
+                        value=f"{int(latest['총_응시자수'])}명",
+                        delta=f"{delta_applicants:+d}명"
+                    )
+                with col2:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 합격률",
+                        value=f"{latest['합격률']:.1f}%",
+                        delta=f"{delta_pass_rate:+.1f}%p"
+                    )
+                with col3:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 평균점수",
+                        value=f"{latest['평균점수']:.1f}점",
+                        delta=f"{delta_avg_score:+.1f}점"
+                    )
+                with col4:
+                    st.metric(
+                        label=f"{int(latest['회차'])}회차 합격자수",
+                        value=f"{int(latest['합격자수'])}명",
+                        delta=f"{delta_passed:+d}명"
+                    )
+
+                st.markdown("---")
+            else:
+                st.info("비교할 수 있는 직전 회차 데이터가 없습니다.")
+
             # Lv.별 인원수 통계 계산
             level_stats = cse_df.groupby(['회차', '등급(Lv.)']).size().reset_index(name='인원수')
             level_pivot = level_stats.pivot(index='회차', columns='등급(Lv.)', values='인원수').fillna(0)
