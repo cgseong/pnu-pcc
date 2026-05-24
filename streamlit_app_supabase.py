@@ -956,22 +956,6 @@ def main():
                     best_round = upgrade_df.loc[upgrade_df['등급상승자수'].idxmax()]
                     st.metric("등급 상승 최다 회차", f"{int(best_round['회차'])}회차 ({int(best_round['등급상승자수'])}명)")
 
-                # 등급 상승자 상세 목록
-                all_upgrade_list = []
-                for _, row in upgrade_df.iterrows():
-                    for student in row['상승자_목록']:
-                        student['회차'] = int(row['회차'])
-                        all_upgrade_list.append(student)
-
-                if all_upgrade_list:
-                    st.markdown("**📋 등급 상승자 상세 목록**")
-                    upgrade_detail_df = pd.DataFrame(all_upgrade_list)
-                    upgrade_detail_df = upgrade_detail_df[['회차', '이름', '학번', '이전등급', '현재등급', '이전점수', '현재점수', '점수변화']]
-                    upgrade_detail_df = upgrade_detail_df.sort_values(['회차', '점수변화'], ascending=[True, False])
-                    st.dataframe(upgrade_detail_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("등급이 상승한 재응시자가 없습니다.")
-
                 # 요약 테이블
                 st.markdown("**📋 회차별 등급 상승 요약**")
                 summary_df = upgrade_df[['회차', '재응시자수', '등급상승자수', '등급상승률', '점수상승자수']].copy()
