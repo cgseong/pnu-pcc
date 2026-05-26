@@ -880,8 +880,10 @@ def main():
                 merged_valid['레벨_현재'] = merged_valid['등급(Lv.)_현재'].apply(extract_level)
                 merged_valid['레벨_이전'] = merged_valid['등급(Lv.)_이전'].apply(extract_level)
                 merged_valid['등급상승'] = merged_valid['레벨_현재'] > merged_valid['레벨_이전']
+                merged_valid['등급하락'] = merged_valid['레벨_현재'] < merged_valid['레벨_이전']
 
                 upgrade_students = merged_valid[merged_valid['등급상승']]
+                downgrade_students = merged_valid[merged_valid['등급하락']]
                 score_up_count = int((merged['총점_현재'] > merged['총점_이전']).sum())
 
                 upgrade_list = []
@@ -900,6 +902,7 @@ def main():
                     '회차': round_num,
                     '재응시자수': retake_count,
                     '등급상승자수': len(upgrade_students),
+                    '등급하락자수': len(downgrade_students),
                     '등급상승률': (len(upgrade_students) / retake_count * 100) if retake_count > 0 else 0,
                     '점수상승자수': score_up_count,
                     '상승자_목록': upgrade_list
@@ -922,10 +925,10 @@ def main():
 
                 fig_upgrade.add_trace(go.Bar(
                     x=[f'{int(r)}회차' for r in upgrade_df['회차']],
-                    y=upgrade_df['재응시자수'] - upgrade_df['등급상승자수'],
-                    name='등급 유지/하락',
-                    marker_color='#BDC3C7',
-                    text=[f'{int(v)}명' for v in (upgrade_df['재응시자수'] - upgrade_df['등급상승자수'])],
+                    y=upgrade_df['등급하락자수'],
+                    name='등급 하락자',
+                    marker_color='#E74C3C',
+                    text=[f'{int(v)}명' for v in upgrade_df['등급하락자수']],
                     textposition='outside'
                 ))
 
@@ -957,9 +960,9 @@ def main():
 
                 # 요약 테이블
                 st.markdown("**📋 회차별 등급 상승 요약**")
-                summary_df = upgrade_df[['회차', '재응시자수', '등급상승자수', '등급상승률', '점수상승자수']].copy()
+                summary_df = upgrade_df[['회차', '재응시자수', '등급상승자수', '등급하락자수', '등급상승률', '점수상승자수']].copy()
                 summary_df['등급상승률'] = summary_df['등급상승률'].round(1).astype(str) + '%'
-                summary_df.columns = ['회차', '재응시자(명)', '등급 상승(명)', '등급 상승률', '점수 상승(명)']
+                summary_df.columns = ['회차', '재응시자(명)', '등급 상승(명)', '등급 하락(명)', '등급 상승률', '점수 상승(명)']
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     # 탭 3: 정보컴퓨터공학부 학년별 통계
