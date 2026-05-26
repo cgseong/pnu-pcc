@@ -852,10 +852,8 @@ def main():
                     })
                     continue
 
-                # 등급 비교 (현재 등급이 '없음'이 아닌 경우만 — '없음'은 Lv.0으로 처리)
-                merged_valid = merged[
-                    merged['등급(Lv.)_현재'] != '없음'
-                ].copy()
+                # 등급 비교 ('없음'은 Lv.0으로 처리하여 모든 재응시자 비교 대상에 포함)
+                merged_valid = merged.copy()
 
                 retake_count = len(merged)
 
