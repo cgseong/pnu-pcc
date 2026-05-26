@@ -852,10 +852,9 @@ def main():
                     })
                     continue
 
-                # 등급 비교 (등급이 '없음'이 아닌 경우만)
+                # 등급 비교 (현재 등급이 '없음'이 아닌 경우만 — '없음'은 Lv.0으로 처리)
                 merged_valid = merged[
-                    (merged['등급(Lv.)_현재'] != '없음') &
-                    (merged['등급(Lv.)_이전'] != '없음')
+                    merged['등급(Lv.)_현재'] != '없음'
                 ].copy()
 
                 retake_count = len(merged)
@@ -871,9 +870,11 @@ def main():
                     })
                     continue
 
-                # 등급 상승 판별 (Lv. 숫자 비교)
+                # 등급 상승 판별 (Lv. 숫자 비교, '없음'은 0으로 처리)
                 def extract_level(lv_str):
                     try:
+                        if str(lv_str).strip() == '없음':
+                            return 0
                         return int(str(lv_str).replace('Lv.', '').replace('lv.', '').strip())
                     except (ValueError, AttributeError):
                         return 0
