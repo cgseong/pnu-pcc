@@ -7,7 +7,8 @@ import numpy as np
 from supabase import create_client, Client
 
 # 컴퓨터공학 계열 학과 상수 정의
-CSE_DEPARTMENTS = ['정보컴퓨터공학부', '전기컴퓨터공학부 정보컴퓨터공학전공', '전기컴퓨터공학부']
+CSE_DEPARTMENTS = ['정보컴퓨터공학부', '정보컴퓨터공학과', '전기컴퓨터공학부 정보컴퓨터공학전공', '정보컴퓨터공학부 컴퓨터공학전공', '정보컴퓨터공학부 인공지능전공',
+'컴퓨터공학과', '전기컴퓨터공학부']
 
 # Supabase 클라이언트 초기화
 @st.cache_resource
