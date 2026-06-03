@@ -6,6 +6,9 @@ from plotly.subplots import make_subplots
 import numpy as np
 from supabase import create_client, Client
 
+# 컴퓨터공학 계열 학과 상수 정의
+CSE_DEPARTMENTS = ['정보컴퓨터공학부', '전기컴퓨터공학부 정보컴퓨터공학전공', '전기컴퓨터공학부']
+
 # Supabase 클라이언트 초기화
 @st.cache_resource
 def init_supabase():
@@ -318,11 +321,7 @@ def main():
         st.header("📈 정보컴퓨터공학부 회차별 응시자 현황")
 
         # 정보컴퓨터공학부/전기컴퓨터공학부 데이터만 필터링
-        cse_df = filtered_df[
-            (filtered_df['학과'] == '정보컴퓨터공학부') |
-            (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
-            (filtered_df['학과'] == '전기컴퓨터공학부')
-        ]
+        cse_df = filtered_df[filtered_df['학과'].isin(CSE_DEPARTMENTS)]
 
         if cse_df.empty:
             st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
@@ -969,11 +968,7 @@ def main():
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
 
-        cse_df = filtered_df[
-            (filtered_df['학과'] == '정보컴퓨터공학부') |
-            (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
-            (filtered_df['학과'] == '전기컴퓨터공학부')
-        ]
+        cse_df = filtered_df[filtered_df['학과'].isin(CSE_DEPARTMENTS)]
 
         if cse_df.empty:
             st.warning("정보컴퓨터공학부/전기컴퓨터공학부 데이터가 없습니다.")
@@ -1611,11 +1606,7 @@ def main():
             st.header("🔄 정보컴퓨터공학부 3회차-5회차 비교 분석")
 
             # 정보컴퓨터공학부/전기컴퓨터공학부 데이터만 필터링
-            cse_df = filtered_df[
-                (filtered_df['학과'] == '정보컴퓨터공학부') |
-                (filtered_df['학과'] == '전기컴퓨터공학부 정보컴퓨터공학전공') |
-                (filtered_df['학과'] == '전기컴퓨터공학부')
-            ]
+            cse_df = filtered_df[filtered_df['학과'].isin(CSE_DEPARTMENTS)]
 
             # 3회차와 5회차 데이터 필터링
             round3_df = cse_df[cse_df['회차'] == 3]
