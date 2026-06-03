@@ -584,51 +584,6 @@ def main():
 
             st.plotly_chart(fig_stacked_count, use_container_width=True)
 
-            # 저학년(1~2학년) 참여도 추이 분석
-            st.markdown("**📈 저학년(1~2학년) 참여도 추이**")
-
-            lower_grades = [col for col in grade_composition_pivot.columns if str(col) in ['1', '2']]
-            if lower_grades:
-                lower_grade_count = grade_composition_pivot[lower_grades].sum(axis=1)
-                total_count = grade_composition_pivot.sum(axis=1)
-                lower_grade_pct = (lower_grade_count / total_count * 100).round(1)
-
-                fig_lower = go.Figure()
-
-                fig_lower.add_trace(go.Scatter(
-                    x=[f'{int(r)}회차' for r in lower_grade_pct.index],
-                    y=lower_grade_pct.values,
-                    mode='lines+markers+text',
-                    name='저학년 비율',
-                    line=dict(color='#FF6B6B', width=3),
-                    marker=dict(size=10),
-                    text=[f'{v:.1f}%' for v in lower_grade_pct.values],
-                    textposition='top center'
-                ))
-
-                fig_lower.update_layout(
-                    title_text="저학년(1~2학년) 참여 비율 추이",
-                    xaxis_title="회차",
-                    yaxis_title="저학년 비율 (%)",
-                    height=350,
-                    showlegend=False,
-                    yaxis=dict(range=[0, max(lower_grade_pct.values) * 1.3])
-                )
-
-                st.plotly_chart(fig_lower, use_container_width=True)
-
-                # 저학년 참여도 인사이트
-                first_round_pct = lower_grade_pct.iloc[0]
-                last_round_pct = lower_grade_pct.iloc[-1]
-                pct_change = last_round_pct - first_round_pct
-
-                if pct_change > 0:
-                    st.success(f"✅ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 증가**했습니다. 홍보 효과가 나타나고 있습니다!")
-                elif pct_change < 0:
-                    st.warning(f"⚠️ 저학년 참여 비율이 {first_round_pct:.1f}% → {last_round_pct:.1f}%로 **{pct_change:+.1f}%p 감소**했습니다. 저학년 대상 홍보 강화가 필요합니다.")
-                else:
-                    st.info(f"ℹ️ 저학년 참여 비율이 {last_round_pct:.1f}%로 유지되고 있습니다.")
-
             # 상세 테이블
             st.markdown("**📋 회차별 학년 구성 상세**")
             display_composition = grade_composition_pivot.copy()
