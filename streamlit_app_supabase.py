@@ -965,6 +965,165 @@ def main():
                 summary_df.columns = ['회차', '재응시자(명)', '등급 상승(명)', '등급 하락(명)', '등급 상승률', '점수 상승(명)']
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
+            # 회차별 신규응시자수와 합격률 현황
+            st.subheader("🆕 회차별 신규응시자수와 합격률 현황")
+            st.caption("각 회차에서 처음 응시하는 신규 학생의 수와 그들의 합격률을 보여줍니다. 신규 유입 학생의 준비도를 파악할 수 있습니다.")
+
+            # 회차별 신규응시자의 합격률 계산
+            new_applicant_pass_data = []
+
+            for round_num in sorted_rounds:
+                current_round_data = cse_df[cse_df['회차'] == round_num][['이름', '학번', '합격여부_binary']].copy()
+                previous_rounds_students = cse_df[cse_df['회차'] < round_num][['이름', '학번']].drop_duplicates()
+
+                if previous_rounds_students.empty:
+                    # 첫 회차는 모두 신규
+                    new_students = current_round_data
+                else:
+                    # 이전 회차에 응시한 적 없는 학생 = 신규응시자
+                    merged = current_round_data.merge(
+                        previous_rounds_students, on=['이름', '학번'], how='left', indicator=True
+                    )
+                    new_students = merged[merged['_merge'] == 'left_only']
+
+                new_count = len(new_students)
+                new_pass_count = int(new_students['합격여부_binary'].sum()) if new_count > 0 else 0
+                new_pass_rate = (new_pass_count / new_count * 100) if new_count > 0 else 0
+
+                new_applicant_pass_data.append({
+                    '회차': round_num,
+                    '신규응시자수': new_count,
+                    '신규합격자수': new_pass_count,
+                    '신규합격률': round(new_pass_rate, 1)
+                })
+
+            new_applicant_pass_df = pd.DataFrame(new_applicant_pass_data)
+
+            # 복합 차트: 신규응시자수 (막대) + 신규합격률 (라인)
+            fig_new_pass = make_subplots(specs=[[{"secondary_y": True}]])
+
+            fig_new_pass.add_trace(
+                go.Bar(
+                    x=[f'{int(r)}회차' for r in new_applicant_pass_df['회차']],
+                    y=new_applicant_pass_df['신규응시자수'],
+                    name='신규응시자수',
+                    marker_color='#4ECDC4',
+                    text=[f'{int(v)}명' for v in new_applicant_pass_df['신규응시자수']],
+                    textposition='outside',
+                    opacity=0.8
+                ),
+                secondary_y=False
+            )
+
+            fig_new_pass.add_trace(
+                go.Scatter(
+                    x=[f'{int(r)}회차' for r in new_applicant_pass_df['회차']],
+                    y=new_applicant_pass_df['신규합격률'],
+                    mode='lines+markers+text',
+                    name='신규응시자 합격률',
+                    line=dict(color='#E74C3C', width=3),
+                    marker=dict(size=10, color='#E74C3C'),
+                    text=[f'{v:.1f}%' for v in new_applicant_pass_df['신규합격률']],
+                    textposition='top center'
+                ),
+                secondary_y=True
+            )
+
+            fig_new_pass.update_layout(
+                title_text="회차별 신규응시자수와 합격률 현황",
+                height=450,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            fig_new_pass.update_xaxes(title_text="회차")
+            fig_new_pass.update_yaxes(title_text="신규응시자수 (명)", secondary_y=False)
+            fig_new_pass.update_yaxes(title_text="합격률 (%)", range=[0, 100], secondary_y=True)
+
+            st.plotly_chart(fig_new_pass, use_container_width=True)
+
+            # 전체 합격률과 신규응시자 합격률 비교
+            st.markdown("**📊 전체 합격률 vs 신규응시자 합격률 비교**")
+
+            comparison_data = round_stats[['회차', '합격률']].merge(
+                new_applicant_pass_df[['회차', '신규합격률']], on='회차'
+            )
+
+            fig_compare = go.Figure()
+
+            fig_compare.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in comparison_data['회차']],
+                y=comparison_data['합격률'],
+                mode='lines+markers+text',
+                name='전체 합격률',
+                line=dict(color='#3498DB', width=3),
+                marker=dict(size=9),
+                text=[f'{v:.1f}%' for v in comparison_data['합격률']],
+                textposition='top center'
+            ))
+
+            fig_compare.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in comparison_data['회차']],
+                y=comparison_data['신규합격률'],
+                mode='lines+markers+text',
+                name='신규응시자 합격률',
+                line=dict(color='#E74C3C', width=3, dash='dash'),
+                marker=dict(size=9),
+                text=[f'{v:.1f}%' for v in comparison_data['신규합격률']],
+                textposition='bottom center'
+            ))
+
+            fig_compare.update_layout(
+                title_text="전체 합격률 vs 신규응시자 합격률 비교",
+                xaxis_title="회차",
+                yaxis_title="합격률 (%)",
+                height=400,
+                showlegend=True,
+                yaxis=dict(range=[0, 100]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_compare, use_container_width=True)
+
+            # 인사이트
+            if len(new_applicant_pass_df) >= 2:
+                latest_new = new_applicant_pass_df.iloc[-1]
+                first_new = new_applicant_pass_df.iloc[0]
+                avg_new_pass_rate = new_applicant_pass_df['신규합격률'].mean()
+                avg_overall_pass_rate = round_stats['합격률'].mean()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "최근 회차 신규응시자수",
+                        f"{int(latest_new['신규응시자수'])}명",
+                        delta=f"{int(latest_new['신규응시자수'] - first_new['신규응시자수']):+d}명 (vs 1회차)"
+                    )
+                with col2:
+                    st.metric(
+                        "신규응시자 평균 합격률",
+                        f"{avg_new_pass_rate:.1f}%",
+                        delta=f"{avg_new_pass_rate - avg_overall_pass_rate:+.1f}%p (vs 전체)"
+                    )
+                with col3:
+                    st.metric(
+                        "최근 회차 신규 합격률",
+                        f"{latest_new['신규합격률']:.1f}%"
+                    )
+
+                gap = avg_new_pass_rate - avg_overall_pass_rate
+                if gap >= 0:
+                    st.success(f"✅ 신규응시자 평균 합격률({avg_new_pass_rate:.1f}%)이 전체 평균({avg_overall_pass_rate:.1f}%)보다 **{gap:.1f}%p 높습니다**. 신규 학생들의 준비도가 양호합니다.")
+                else:
+                    st.warning(f"⚠️ 신규응시자 평균 합격률({avg_new_pass_rate:.1f}%)이 전체 평균({avg_overall_pass_rate:.1f}%)보다 **{abs(gap):.1f}%p 낮습니다**. 첫 응시 전 사전 학습 지원이 필요할 수 있습니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 신규응시자 합격 현황 상세**")
+            display_new_pass = new_applicant_pass_df.copy()
+            display_new_pass['신규합격률'] = display_new_pass['신규합격률'].astype(str) + '%'
+            display_new_pass.columns = ['회차', '신규응시자(명)', '신규합격자(명)', '신규합격률']
+            st.dataframe(display_new_pass, use_container_width=True, hide_index=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
