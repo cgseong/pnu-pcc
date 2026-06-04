@@ -635,6 +635,17 @@ def main():
             display_composition['합계'] = display_composition.sum(axis=1)
             for col in grade_composition_pivot.columns:
                 display_composition[f'{col}학년(%)'] = (grade_composition_pct[col]).round(1).astype(str) + '%'
+
+            # 회차별 학년별 합격률 계산 및 추가
+            grade_pass_rate = cse_df.groupby(['회차', '학년']).agg(
+                합격률=('합격여부_binary', 'mean')
+            ).reset_index()
+            grade_pass_rate['합격률'] = (grade_pass_rate['합격률'] * 100).round(1)
+            grade_pass_pivot = grade_pass_rate.pivot(index='회차', columns='학년', values='합격률').fillna(0)
+
+            for col in grade_pass_pivot.columns:
+                display_composition[f'{col}학년 합격률'] = grade_pass_pivot[col].astype(str) + '%'
+
             st.dataframe(display_composition, use_container_width=True)
 
             # 회차별 신규 응시자 vs 재응시자 비율
