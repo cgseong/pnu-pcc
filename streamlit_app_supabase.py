@@ -1135,6 +1135,327 @@ def main():
             display_new_pass.columns = ['회차', '신규응시자(명)', '신규합격자(명)', '신규합격률']
             st.dataframe(display_new_pass, use_container_width=True, hide_index=True)
 
+            # 합격 경계선 분석
+            st.subheader("🎯 합격 경계선 분석 (350~450점 구간)")
+            st.caption("합격선(400점) 부근에 위치한 학생 비율을 분석합니다. '조금만 더 노력하면 합격' 학생을 파악하여 학습 독려 근거로 활용할 수 있습니다.")
+
+            # 회차별 경계선 구간 분석
+            boundary_data = []
+
+            for round_num in sorted(cse_df['회차'].unique()):
+                round_data = cse_df[cse_df['회차'] == round_num]['총점']
+                total = len(round_data)
+
+                # 구간별 인원수
+                below_350 = len(round_data[round_data < 350])
+                zone_350_399 = len(round_data[(round_data >= 350) & (round_data < 400)])
+                zone_400_450 = len(round_data[(round_data >= 400) & (round_data <= 450)])
+                above_450 = len(round_data[round_data > 450])
+
+                boundary_data.append({
+                    '회차': round_num,
+                    '350점 미만': below_350,
+                    '350~399점 (아쉬운 불합격)': zone_350_399,
+                    '400~450점 (간신히 합격)': zone_400_450,
+                    '450점 초과': above_450,
+                    '전체': total,
+                    '아쉬운 불합격 비율': (zone_350_399 / total * 100) if total > 0 else 0,
+                    '간신히 합격 비율': (zone_400_450 / total * 100) if total > 0 else 0,
+                    '경계선 구간 비율': ((zone_350_399 + zone_400_450) / total * 100) if total > 0 else 0
+                })
+
+            boundary_df = pd.DataFrame(boundary_data)
+
+            # 경계선 구간 Stacked Bar
+            fig_boundary = go.Figure()
+
+            fig_boundary.add_trace(go.Bar(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['350점 미만'],
+                name='350점 미만',
+                marker_color='#E74C3C',
+                text=[f'{int(v)}명' for v in boundary_df['350점 미만']],
+                textposition='inside',
+                insidetextanchor='middle'
+            ))
+
+            fig_boundary.add_trace(go.Bar(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['350~399점 (아쉬운 불합격)'],
+                name='350~399점 (아쉬운 불합격)',
+                marker_color='#F39C12',
+                text=[f'{int(v)}명' for v in boundary_df['350~399점 (아쉬운 불합격)']],
+                textposition='inside',
+                insidetextanchor='middle'
+            ))
+
+            fig_boundary.add_trace(go.Bar(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['400~450점 (간신히 합격)'],
+                name='400~450점 (간신히 합격)',
+                marker_color='#2ECC71',
+                text=[f'{int(v)}명' for v in boundary_df['400~450점 (간신히 합격)']],
+                textposition='inside',
+                insidetextanchor='middle'
+            ))
+
+            fig_boundary.add_trace(go.Bar(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['450점 초과'],
+                name='450점 초과',
+                marker_color='#3498DB',
+                text=[f'{int(v)}명' for v in boundary_df['450점 초과']],
+                textposition='inside',
+                insidetextanchor='middle'
+            ))
+
+            fig_boundary.update_layout(
+                title_text="회차별 점수 구간 분포",
+                xaxis_title="회차",
+                yaxis_title="인원수 (명)",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_boundary, use_container_width=True)
+
+            # 경계선 비율 추이 라인차트
+            fig_boundary_trend = go.Figure()
+
+            fig_boundary_trend.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['아쉬운 불합격 비율'],
+                mode='lines+markers+text',
+                name='아쉬운 불합격 (350~399점)',
+                line=dict(color='#F39C12', width=3),
+                marker=dict(size=10),
+                text=[f'{v:.1f}%' for v in boundary_df['아쉬운 불합격 비율']],
+                textposition='top center'
+            ))
+
+            fig_boundary_trend.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['간신히 합격 비율'],
+                mode='lines+markers+text',
+                name='간신히 합격 (400~450점)',
+                line=dict(color='#2ECC71', width=3),
+                marker=dict(size=10),
+                text=[f'{v:.1f}%' for v in boundary_df['간신히 합격 비율']],
+                textposition='bottom center'
+            ))
+
+            fig_boundary_trend.add_trace(go.Scatter(
+                x=[f'{int(r)}회차' for r in boundary_df['회차']],
+                y=boundary_df['경계선 구간 비율'],
+                mode='lines+markers',
+                name='경계선 전체 (350~450점)',
+                line=dict(color='#9B59B6', width=2, dash='dot'),
+                marker=dict(size=8)
+            ))
+
+            fig_boundary_trend.update_layout(
+                title_text="합격 경계선 구간 비율 추이",
+                xaxis_title="회차",
+                yaxis_title="비율 (%)",
+                height=400,
+                showlegend=True,
+                yaxis=dict(range=[0, max(boundary_df['경계선 구간 비율'].max() * 1.3, 50)]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_boundary_trend, use_container_width=True)
+
+            # 인사이트 메트릭
+            latest_boundary = boundary_df.iloc[-1]
+            avg_boundary_pct = boundary_df['아쉬운 불합격 비율'].mean()
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "최근 회차 아쉬운 불합격자",
+                    f"{int(latest_boundary['350~399점 (아쉬운 불합격)'])}명",
+                    delta=f"{latest_boundary['아쉬운 불합격 비율']:.1f}% of 전체"
+                )
+            with col2:
+                st.metric(
+                    "평균 아쉬운 불합격 비율",
+                    f"{avg_boundary_pct:.1f}%"
+                )
+            with col3:
+                total_near_miss = boundary_df['350~399점 (아쉬운 불합격)'].sum()
+                st.metric(
+                    "누적 아쉬운 불합격자",
+                    f"{int(total_near_miss)}명"
+                )
+
+            if latest_boundary['아쉬운 불합격 비율'] > 15:
+                st.warning(f"⚠️ 최근 회차에서 **{latest_boundary['아쉬운 불합격 비율']:.1f}%**의 학생이 합격선에 근접했으나 불합격했습니다. 시험 전 집중 보충 학습 프로그램이 효과적일 수 있습니다.")
+            elif latest_boundary['아쉬운 불합격 비율'] > 10:
+                st.info(f"📌 최근 회차에서 **{latest_boundary['아쉬운 불합격 비율']:.1f}%**의 학생이 합격 경계에 있습니다. 소규모 스터디 그룹 운영을 권장합니다.")
+            else:
+                st.success(f"✅ 경계선 불합격 비율이 **{latest_boundary['아쉬운 불합격 비율']:.1f}%**로 낮은 편입니다. 학생들이 충분히 준비하고 있는 것으로 보입니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 경계선 분석 상세**")
+            display_boundary = boundary_df.copy()
+            display_boundary['아쉬운 불합격 비율'] = display_boundary['아쉬운 불합격 비율'].round(1).astype(str) + '%'
+            display_boundary['간신히 합격 비율'] = display_boundary['간신히 합격 비율'].round(1).astype(str) + '%'
+            display_boundary['경계선 구간 비율'] = display_boundary['경계선 구간 비율'].round(1).astype(str) + '%'
+            st.dataframe(display_boundary, use_container_width=True, hide_index=True)
+
+            # 레벨 분포 변화 추이 (Area Chart)
+            st.subheader("🏆 회차별 레벨(Lv.) 분포 변화 추이")
+            st.caption("회차가 진행됨에 따라 전체적인 역량 수준이 상향되고 있는지 확인할 수 있습니다. 상위 레벨 비율이 증가하면 학부 전체 역량이 성장하고 있다는 의미입니다.")
+
+            # 회차별 레벨 분포 비율 계산
+            level_composition = cse_df.groupby(['회차', '등급(Lv.)']).size().reset_index(name='인원수')
+            level_composition_pivot = level_composition.pivot(index='회차', columns='등급(Lv.)', values='인원수').fillna(0)
+            level_composition_pct = level_composition_pivot.div(level_composition_pivot.sum(axis=1), axis=0) * 100
+
+            # 레벨별 색상 (낮은 레벨 = 빨강 계열, 높은 레벨 = 파랑/초록 계열)
+            level_colors = {
+                '없음': '#BDC3C7',
+                'Lv.1': '#E74C3C',
+                'Lv.2': '#F39C12',
+                'Lv.3': '#2ECC71',
+                'Lv.4': '#3498DB',
+                'Lv.5': '#8E44AD'
+            }
+
+            # Area Chart (비율)
+            fig_level_area = go.Figure()
+
+            # 레벨 순서 정의
+            level_order = ['없음', 'Lv.1', 'Lv.2', 'Lv.3', 'Lv.4', 'Lv.5']
+            available_levels = [lv for lv in level_order if lv in level_composition_pct.columns]
+
+            for level in available_levels:
+                fig_level_area.add_trace(go.Scatter(
+                    x=[f'{int(r)}회차' for r in level_composition_pct.index],
+                    y=level_composition_pct[level],
+                    mode='lines',
+                    name=level,
+                    stackgroup='one',
+                    line=dict(width=0.5),
+                    fillcolor=level_colors.get(level, '#868E96'),
+                    marker=dict(color=level_colors.get(level, '#868E96'))
+                ))
+
+            fig_level_area.update_layout(
+                title_text="회차별 레벨 분포 비율 추이 (Stacked Area)",
+                xaxis_title="회차",
+                yaxis_title="비율 (%)",
+                height=450,
+                showlegend=True,
+                yaxis=dict(range=[0, 100]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_level_area, use_container_width=True)
+
+            # 레벨 분포 인원수 Stacked Bar
+            fig_level_bar = go.Figure()
+
+            for level in available_levels:
+                fig_level_bar.add_trace(go.Bar(
+                    x=[f'{int(r)}회차' for r in level_composition_pivot.index],
+                    y=level_composition_pivot[level],
+                    name=level,
+                    marker_color=level_colors.get(level, '#868E96'),
+                    text=[f'{int(v)}' for v in level_composition_pivot[level]],
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+
+            fig_level_bar.update_layout(
+                title_text="회차별 레벨 분포 (인원수)",
+                xaxis_title="회차",
+                yaxis_title="인원수 (명)",
+                barmode='stack',
+                height=450,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+
+            st.plotly_chart(fig_level_bar, use_container_width=True)
+
+            # 상위 레벨(Lv.3 이상) 비율 추이
+            upper_levels = [lv for lv in ['Lv.3', 'Lv.4', 'Lv.5'] if lv in level_composition_pct.columns]
+            if upper_levels:
+                upper_level_pct = level_composition_pct[upper_levels].sum(axis=1)
+
+                fig_upper = go.Figure()
+
+                fig_upper.add_trace(go.Scatter(
+                    x=[f'{int(r)}회차' for r in upper_level_pct.index],
+                    y=upper_level_pct.values,
+                    mode='lines+markers+text',
+                    name='Lv.3 이상 비율',
+                    line=dict(color='#8E44AD', width=3),
+                    marker=dict(size=10),
+                    text=[f'{v:.1f}%' for v in upper_level_pct.values],
+                    textposition='top center',
+                    fill='tozeroy',
+                    fillcolor='rgba(142, 68, 173, 0.1)'
+                ))
+
+                fig_upper.update_layout(
+                    title_text="상위 레벨(Lv.3 이상) 비율 추이 — 학부 역량 성장 지표",
+                    xaxis_title="회차",
+                    yaxis_title="Lv.3 이상 비율 (%)",
+                    height=350,
+                    showlegend=False,
+                    yaxis=dict(range=[0, max(upper_level_pct.values) * 1.5 if len(upper_level_pct) > 0 else 50])
+                )
+
+                st.plotly_chart(fig_upper, use_container_width=True)
+
+                # 인사이트
+                first_upper = upper_level_pct.iloc[0]
+                last_upper = upper_level_pct.iloc[-1]
+                upper_change = last_upper - first_upper
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "최근 회차 Lv.3+ 비율",
+                        f"{last_upper:.1f}%",
+                        delta=f"{upper_change:+.1f}%p (vs 1회차)"
+                    )
+                with col2:
+                    # 가장 높은 레벨 분포 회차
+                    best_upper_round = upper_level_pct.idxmax()
+                    st.metric(
+                        "Lv.3+ 최고 회차",
+                        f"{int(best_upper_round)}회차",
+                        delta=f"{upper_level_pct[best_upper_round]:.1f}%"
+                    )
+                with col3:
+                    avg_upper = upper_level_pct.mean()
+                    st.metric(
+                        "평균 Lv.3+ 비율",
+                        f"{avg_upper:.1f}%"
+                    )
+
+                if upper_change > 5:
+                    st.success(f"🎉 상위 레벨(Lv.3+) 비율이 {first_upper:.1f}% → {last_upper:.1f}%로 **{upper_change:+.1f}%p 상승**! 학부 전체 역량이 뚜렷하게 성장하고 있습니다.")
+                elif upper_change > 0:
+                    st.info(f"📈 상위 레벨 비율이 소폭 증가({upper_change:+.1f}%p)하고 있습니다. 역량 상향 추세가 나타나고 있습니다.")
+                elif upper_change == 0:
+                    st.info("ℹ️ 상위 레벨 비율이 유지되고 있습니다.")
+                else:
+                    st.warning(f"⚠️ 상위 레벨 비율이 감소({upper_change:+.1f}%p)하고 있습니다. 중급 이상 알고리즘 학습 지원 강화가 필요합니다.")
+
+            # 상세 테이블
+            st.markdown("**📋 회차별 레벨 분포 상세**")
+            display_level = level_composition_pivot.copy()
+            display_level['합계'] = display_level.sum(axis=1)
+            for col in available_levels:
+                display_level[f'{col}(%)'] = level_composition_pct[col].round(1).astype(str) + '%'
+            st.dataframe(display_level, use_container_width=True)
+
     # 탭 3: 정보컴퓨터공학부 학년별 통계
     with tab3:
         st.header("🎓 정보컴퓨터공학부 학년별 통계")
